@@ -1,0 +1,8 @@
+{
+	auto_https disable_redirects
+}
+
+127.0.0.1.nip.io:443 {
+	tls internal
+	reverse_proxy web:3000
+}

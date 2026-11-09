@@ -1,0 +1,53 @@
+# A VPS in a box: a real Sure behind HTTPS, with a network that can be slowed or cut.
+#   plugin -> toxiproxy :18443 -> caddy (TLS) -> web :3000
+# Used by tests/vps/up.sh. Separate project name, so it never touches a real Sure.
+name: sure-bar-vps
+
+x-env: &env
+  POSTGRES_USER: sure
+  POSTGRES_PASSWORD: sure
+  POSTGRES_DB: sure
+  DB_HOST: db
+  DB_PORT: 5432
+  REDIS_URL: redis://redis:6379/1
+  SECRET_KEY_BASE: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  SELF_HOSTED: ${SELF_HOSTED:-true}
+  RAILS_FORCE_SSL: "false"
+  RAILS_ASSUME_SSL: "true"
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment: *env
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: pg_isready -U sure
+      interval: 2s
+      retries: 30
+  redis:
+    image: redis:latest
+    tmpfs: [/data]
+  web:
+    image: ${SURE_IMAGE:-ghcr.io/we-promise/sure:stable}
+    environment: *env
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_started}
+  worker:
+    image: ${SURE_IMAGE:-ghcr.io/we-promise/sure:stable}
+    command: bundle exec sidekiq
+    environment: *env
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_started}
+  caddy:
+    image: caddy:2-alpine
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on: [web]
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.12.0
+    ports:
+      - 127.0.0.1:18443:18443
+      - 127.0.0.1:18474:8474
+    depends_on: [caddy]
