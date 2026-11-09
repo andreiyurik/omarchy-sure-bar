@@ -15,4 +15,5 @@ First public release.
 - Connection problems are named: DNS, refused, timeout, certificate, a proxy or login page, an old Sure, rate limits.
 - Offline, the last real numbers stay on screen, with automatic retries and a refresh after sleep.
 - Lost replies can't create duplicate entries. View-only keys are supported.
+- All of Sure's currencies, with their precision and your language's number format. Manual rates for business money and goals in another currency.
 - English and Russian.

@@ -74,7 +74,7 @@ Russian works too: `цель 7000`, `неделя 10 предложений кл
 
 With the entry line empty, ↑ and ↓ change the weekly count. The action carries over to the next week with a clean count. On the 1st, the race starts again and last month's result waits in a short review until you dismiss it.
 
-A goal is in your Sure default currency, because the plugin doesn't convert. Changing a goal applies from the current month, so past reviews keep the goal they had.
+A goal is in your Sure default currency unless you name another, as in `goal 7000 USD`. Changing a goal applies from the current month, so past reviews keep the goal they had.
 
 ### Why it works this way
 
@@ -90,6 +90,20 @@ The design draws on published research. None of these studies tested a finance w
 | A clean start each month | [Dai et al., 2014](https://doi.org/10.1287/mnsc.2014.1901) |
 | No points or loot; profit next to revenue; no ceiling at 100% | [Deci et al., 1999](https://doi.org/10.1037/0033-2909.125.6.627); [Ordóñez et al., 2009](https://doi.org/10.5465/amp.2009.37007999) |
 | No revenue streaks | [Silverman & Barasch, 2023](https://doi.org/10.1093/jcr/ucac029) |
+
+## Currencies
+
+Amounts use the symbol and precision your Sure defines, and the number format of your language. Cents appear where they matter: `$9.50`, `$7,000`, `₿0.5`. Entries understand `1,500`, `1.234,56` and, on a currency with three decimals, `1.234`. An entry is saved in the currency of its account.
+
+Sure converts its overall totals itself. Its API doesn't share exchange rates, so for business revenue in another currency you give the plugin a rate:
+
+| You type | What it does |
+| --- | --- |
+| `rate USD 92` | 1 USD counts as 92 in your Sure default currency |
+| `rate USD off` | Removes it |
+| `goal 7000 USD` | A goal in dollars, compared using that rate |
+
+Without a rate, that money isn't guessed at: the panel shows how much is left out and offers to add one. One rate per currency applies to every month, so changing it changes past totals. Rates are never fetched from the internet, so the plugin still talks only to your Sure.
 
 ## Optional hotkey
 
@@ -117,7 +131,7 @@ o.bind("SUPER + ALT + M", "Sure finance panel", "omarchy-shell shell toggle andr
 - Revenue is income on transactions with your business tag. The goal, milestones and the race are recalculated from your transactions every time, so there is no separate game state to lose.
 - Closed months and older revenue are kept locally so refreshes stay quick. Everything is read again once a day and whenever you press refresh.
 - Transfers between your own accounts are ignored. A refund from a supplier looks like income in Sure, so tagging one as business counts it as revenue.
-- Transactions in a currency other than your Sure default are left out of business numbers, and the panel says how many.
+- Business transactions in a currency other than your Sure default count once you set a rate for it. Until then the panel says what is left out.
 - At most the latest 3,000 matching transactions are read. If you have more, the panel warns that lifetime revenue and milestones may be low.
 - The panel warns once if Sure's timezone differs from your computer's, because entries near midnight can land on the wrong day.
 
