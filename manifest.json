@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "id": "andreiyurik.sure-bar",
+  "name": "Sure Bar",
+  "version": "0.1.0",
+  "author": "Andrei Yurik",
+  "license": "MIT",
+  "preview": "preview.png",
+  "homepage": "https://github.com/andreiyurik/omarchy-sure-bar",
+  "repository": "https://github.com/andreiyurik/omarchy-sure-bar",
+  "keywords": ["finance", "budget", "cash flow", "sure", "revenue", "goals", "startup", "expenses"],
+  "description": "Monthly revenue goal, weekly action, cash flow and one-line expense entry for a self-hosted Sure instance. Unofficial.",
+  "kinds": ["service", "bar-widget"],
+  "entryPoints": {"service": "Service.qml", "barWidget": "BarWidget.qml"},
+  "barWidget": {
+    "displayName": "Sure Bar",
+    "category": "Finance",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "baseUrl": "http://localhost:3000",
+      "allowInsecureHttp": false,
+      "autoRefresh": true,
+      "refreshMinutes": 10,
+      "businessTag": "business",
+      "trackAllIncome": false,
+      "defaultAccount": "",
+      "demoMode": false
+    },
+    "schema": [
+      {"key": "baseUrl", "type": "string", "label": "Sure URL", "description": "Plain origin, for example http://localhost:3000 or https://sure.example.com"},
+      {"key": "allowInsecureHttp", "type": "boolean", "label": "Allow plain HTTP to non-local hosts", "description": "Sends your API key unencrypted. Only for a network you trust."},
+      {"key": "autoRefresh", "type": "boolean", "label": "Refresh in the background"},
+      {"key": "refreshMinutes", "type": "integer", "label": "Refresh interval (minutes)", "min": 1, "max": 120},
+      {"key": "businessTag", "type": "string", "label": "Business tag", "description": "Transactions with this tag count as business revenue and spending."},
+      {"key": "trackAllIncome", "type": "boolean", "label": "Count all income as revenue", "description": "Ignores the business tag. For people who do not separate business money."},
+      {"key": "defaultAccount", "type": "string", "label": "Default account", "description": "Part of an account name, used when an entry has no @account."},
+      {"key": "demoMode", "type": "boolean", "label": "Show demo data"}
+    ]
+  }
+}
