@@ -41,6 +41,86 @@ function amountFrom(whole, fraction, thousands) {
   return parseFloat(whole.replace(/ /g, "") + (fraction ? "." + fraction : "")) * (thousands ? 1000 : 1)
 }
 
+// People paste "sure.example.com"; only this machine defaults to plain HTTP.
+function normalizeServer(raw) {
+  var text = String(raw || "").trim()
+  if (!text || /^[a-z][a-z0-9+.-]*:\/\//i.test(text)) return text
+  return (/^(localhost|127(\.\d{1,3}){3})([:/]|$)/i.test(text) ? "http://" : "https://") + text
+}
+
+// What went wrong, from what came back. A non-JSON answer was not written by Sure.
+function failureKey(status, isJson) {
+  if (status === -1) return "error.too-large"
+  if (status === 0) return "error.unreachable"
+  if (status === 429) return "error.rate-limited"
+  if (status === 401 || status === 403) return !isJson ? "error.proxy" : status === 401 ? "error.rejected" : "error.forbidden"
+  if (status === 404) return isJson ? "error.not-found" : "error.not-sure"
+  if (status >= 500) return "error.server"
+  if (status >= 200 && status < 300) return "error.not-sure"
+  return "error.http"
+}
+
+// Exit codes from `curl`, used to explain a connection the HTTP client only reports as failed.
+function probeKey(exitCode) {
+  if (exitCode === 6) return "error.dns"
+  if (exitCode === 7) return "error.refused"
+  if (exitCode === 28) return "error.timeout"
+  return [51, 58, 60, 77, 80, 83, 90, 91].indexOf(exitCode) >= 0 ? "error.tls" : "error.unreachable"
+}
+
+function retryable(key) {
+  return ["error.unreachable", "error.dns", "error.refused", "error.timeout", "error.tls", "error.server", "error.rate-limited"].indexOf(key) >= 0
+}
+
+function retryDelay(attempt, retryAfterSeconds, baseMs, maxMs) {
+  if (retryAfterSeconds > 0) return Math.min(retryAfterSeconds, 3600) * 1000
+  return Math.min(maxMs, baseMs * Math.pow(2, Math.min(attempt, 16)))
+}
+
+// A server in another timezone can be a day behind, and then today's entries look like the future.
+function latestDay(serverDay, localDate) {
+  var local = iso(localDate), server = String(serverDay).slice(0, 10)
+  return new Date((server > local ? server : local) + "T00:00:00")
+}
+
+function externalId(nowMs, random) {
+  return "sure-bar-" + Math.floor(nowMs).toString(36) + "-" + Math.floor(random * 1e12).toString(36)
+}
+
+// Revenue before this date is taken from the local cache: last month onward can still change.
+function windowStart(currentMonth) { return monthsBack(currentMonth, 2)[0] }
+
+function cacheKey(baseUrl, businessTag, trackAll) { return [baseUrl, String(businessTag).toLowerCase(), trackAll === true].join("|") }
+
+function needsFullRefresh(cache, key, today, forced) { return forced === true || !cache || cache.key !== key || cache.day !== today }
+
+function slimTransaction(t) {
+  return {date: String(t.date).slice(0, 10), amount_cents: num(t.amount_cents), currency: String(t.currency), classification: String(t.classification), transfer: !!t.transfer}
+}
+
+function mergeTransactions(cached, fresh, start) {
+  return (cached || []).filter(function(t) { return t.date < start }).concat(fresh)
+}
+
+// A short window can hold fewer rows than the list shows, so older known ones fill the rest.
+function mergeRecent(fresh, previous, start, limit) {
+  var known = {}
+  fresh.forEach(function(row) { known[row.id] = true })
+  return fresh.concat((previous || []).filter(function(row) { return !known[row.id] && String(row.date) < start })).slice(0, limit)
+}
+
+function readSnapshot(raw, key) {
+  if (!raw || raw.version !== 1 || raw.key !== key || !(raw.savedAt > 0) || !raw.cache || !Array.isArray(raw.cache.transactions)) return null
+  var p = raw.payload
+  if (!p || p.status !== "ok" || !Array.isArray(p.series) || !p.game || !p.business || !Array.isArray(p.recent)) return null
+  return raw
+}
+
+function timezoneWarning(zone, remoteOffset, localOffset) {
+  if (!zone || !remoteOffset || !localOffset || remoteOffset === localOffset) return null
+  return {key: "warn.timezone", arg: zone + " (UTC" + remoteOffset + ")", arg2: "UTC" + localOffset, dismiss: "tz:" + zone + "|" + localOffset}
+}
+
 // "450 coffee", "+1200 client #b", "1.5k lunch #b @cash yesterday"
 function parseEntry(raw, today, businessTag) {
   var text = String(raw || "").trim()
@@ -86,7 +166,7 @@ function parseCommand(raw) {
 }
 
 function clone(value) { return JSON.parse(JSON.stringify(value)) }
-function emptyPlan() { return {goals: {}, actions: [], reviewed: ""} }
+function emptyPlan() { return {goals: {}, actions: [], reviewed: "", dismissed: []} }
 
 // The plan file can be edited by hand, so nothing in it is trusted.
 function normalizePlan(raw) {
@@ -107,6 +187,7 @@ function normalizePlan(raw) {
       : {week: a.week, text: a.text.slice(0, 80), target: Math.min(999, Math.floor(num(a.target))), done: Math.max(0, Math.floor(num(a.done)))}
   }).sort(byWeek).slice(-MAX_ACTIONS)
   if (/^\d{4}-\d{2}$/.test(raw.reviewed)) plan.reviewed = raw.reviewed
+  if (Array.isArray(raw.dismissed)) plan.dismissed = raw.dismissed.filter(function(id) { return typeof id === "string" }).slice(-20)
   return plan
 }
 

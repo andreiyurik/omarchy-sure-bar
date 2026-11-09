@@ -98,6 +98,48 @@ g = M.game([tx("2026-11-02", 10000000)], asOf, "RUB"); assert(g.next === null &&
 const before = M.game([tx("2026-11-02", 4000)], asOf, "RUB"), after = M.game([tx("2026-11-02", 4000), tx("2026-11-03", 7000)], asOf, "RUB")
 assert(M.freshAchievements(before, after).length === 1 && M.freshAchievements(null, after).length === 0)
 
+// Reaching a server
+assert.strictEqual(M.normalizeServer(" sure.example.com "), "https://sure.example.com")
+assert.strictEqual(M.normalizeServer("localhost:3000"), "http://localhost:3000")
+assert.strictEqual(M.normalizeServer("127.0.0.1:3000"), "http://127.0.0.1:3000")
+assert.strictEqual(M.normalizeServer("http://nas:3000"), "http://nas:3000")
+assert.strictEqual(M.normalizeServer("localhost.evil.com"), "https://localhost.evil.com")
+assert.strictEqual(M.normalizeServer(""), "")
+
+// Telling failures apart
+for (const [status, json, key] of [[0, false, "unreachable"], [-1, false, "too-large"], [429, true, "rate-limited"], [401, true, "rejected"], [401, false, "proxy"], [403, true, "forbidden"], [403, false, "proxy"],
+  [404, true, "not-found"], [404, false, "not-sure"], [500, true, "server"], [502, false, "server"], [200, false, "not-sure"], [418, false, "http"]]) {
+  assert.strictEqual(M.failureKey(status, json), "error." + key, status + " " + json)
+}
+for (const [code, key] of [[6, "dns"], [7, "refused"], [28, "timeout"], [60, "tls"], [51, "tls"], [35, "unreachable"], [0, "unreachable"], [127, "unreachable"]]) assert.strictEqual(M.probeKey(code), "error." + key, String(code))
+assert(M.retryable("error.dns") && M.retryable("error.server") && M.retryable("error.rate-limited"))
+for (const key of ["error.rejected", "error.proxy", "error.not-sure", "error.not-found", "error.too-large"]) assert(!M.retryable(key), key)
+assert.deepStrictEqual([0, 1, 2, 20].map(n => M.retryDelay(n, 0, 15000, 300000)), [15000, 30000, 60000, 300000])
+assert.strictEqual(M.retryDelay(5, 42, 15000, 300000), 42000)
+assert.strictEqual(M.retryDelay(0, 999999, 15000, 300000), 3600000)
+assert.notStrictEqual(M.externalId(1000, 0.1), M.externalId(1000, 0.2))
+
+// A server behind or ahead of this computer
+assert.strictEqual(M.iso(M.latestDay("2026-11-09", new Date(2026, 10, 10, 4))), "2026-11-10")
+assert.strictEqual(M.iso(M.latestDay("2026-11-11", new Date(2026, 10, 10, 4))), "2026-11-11")
+
+// Local cache
+assert.strictEqual(M.windowStart("2026-11-01"), "2026-10-01")
+assert.strictEqual(M.windowStart("2026-01-01"), "2025-12-01")
+const ck = M.cacheKey("https://a", "Biz", false); assert.strictEqual(ck, M.cacheKey("https://a", "biz", false)); assert.notStrictEqual(ck, M.cacheKey("https://b", "biz", false)); assert.notStrictEqual(ck, M.cacheKey("https://a", "biz", true))
+assert(M.needsFullRefresh(null, ck, "2026-11-09") && M.needsFullRefresh({key: ck, day: "2026-11-09"}, ck, "2026-11-09", true) && M.needsFullRefresh({key: ck, day: "2026-11-08"}, ck, "2026-11-09") && M.needsFullRefresh({key: "x", day: "2026-11-09"}, ck, "2026-11-09"))
+assert(!M.needsFullRefresh({key: ck, day: "2026-11-09"}, ck, "2026-11-09"))
+const slim = plain(M.slimTransaction({date: "2026-11-02T00:00:00Z", amount_cents: 5, currency: "USD", classification: "income", name: "secret", transfer: {id: 1}}))
+assert.deepStrictEqual(slim, {date: "2026-11-02", amount_cents: 5, currency: "USD", classification: "income", transfer: true})
+assert.deepStrictEqual(plain(M.mergeTransactions([{date: "2026-09-30"}, {date: "2026-10-01", stale: true}], [{date: "2026-10-05"}], "2026-10-01")), [{date: "2026-09-30"}, {date: "2026-10-05"}])
+assert.deepStrictEqual(plain(M.mergeRecent([{id: 1, date: "2026-11-01"}], [{id: 1, date: "2026-11-01"}, {id: 2, date: "2026-11-02"}, {id: 3, date: "2026-09-01"}], "2026-10-01", 6)).map(r => r.id), [1, 3])
+const snap = {version: 1, key: ck, savedAt: 5, cache: {transactions: []}, payload: {status: "ok", series: [], game: {}, business: {}, recent: []}}
+assert(M.readSnapshot(snap, ck)); assert.strictEqual(M.readSnapshot(snap, "other"), null); assert.strictEqual(M.readSnapshot(null, ck), null)
+for (const broken of [{version: 2}, {payload: null}, {cache: {}}, {payload: {status: "demo"}}, {savedAt: 0}]) assert.strictEqual(M.readSnapshot(Object.assign({}, snap, broken), ck), null)
+assert.strictEqual(M.timezoneWarning("Etc/UTC", "+0000", "+0000"), null)
+assert.strictEqual(M.timezoneWarning("Etc/UTC", "", "+0800"), null)
+const tzw = plain(M.timezoneWarning("Etc/UTC", "+0000", "+0800")); assert(tzw.arg === "Etc/UTC (UTC+0000)" && tzw.arg2 === "UTC+0800" && tzw.dismiss === "tz:Etc/UTC|+0800")
+
 // Commands
 const cmd = s => plain(M.parseCommand(s))
 assert.strictEqual(M.parseCommand("450 coffee"), null)

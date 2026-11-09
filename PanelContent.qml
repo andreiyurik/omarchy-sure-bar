@@ -12,10 +12,11 @@ Column {
   property string view: "growth"
   property string scope: "all"
   property bool skipSetup: false
+  property bool settingsOpen: false
   property string error: ""
-  readonly property bool showSetup: !!service && service.needsSetup && !skipSetup
-  readonly property Item focusItem: showSetup ? setup.keyField : input
-  readonly property bool editing: input.activeFocus || setup.keyField.activeFocus
+  readonly property bool showSetup: !!service && (settingsOpen || (service.needsSetup && !skipSetup))
+  readonly property Item focusItem: showSetup ? setup.firstField : input
+  readonly property bool editing: input.activeFocus || setup.editing
   readonly property var payload: service ? service.payload : null
   readonly property var command: service ? Model.parseCommand(input.text) : null
   readonly property var parsed: service && !command && input.text.trim() !== "" ? Model.parseEntry(input.text, new Date(), service.businessTag) : null
@@ -24,15 +25,22 @@ Column {
   readonly property var banners: {
     if (!service || !payload) return []
     var out = []
-    if (service.message) out.push({text: service.message, urgent: true})
+    var stale = service.canRetry && payload.status === "ok"
+    if (service.message) out.push({text: service.message + (stale ? " " + service.t("banner.last-data") : ""), urgent: !stale})
     if (payload.status === "demo" && !(service.message && payload.reason === "demo.reason.unreachable")) out.push({text: service.t("banner.demo").arg(service.t(payload.reason)), connect: service.needsSetup})
     ;(payload.warnings || []).forEach(function(w) { out.push({text: service.t(w.key).arg(w.arg)}) })
+    var zone = service.visibleTimezoneNote
+    if (zone) out.push({text: service.t(zone.key).arg(zone.arg).arg(zone.arg2), dismiss: zone.dismiss})
     return out
   }
   signal closeRequested()
+  Connections {
+    target: root.service
+    function onConnected() { root.settingsOpen = false; root.skipSetup = false; root.focusItem.forceActiveFocus() }
+  }
   spacing: Style.space(12)
 
-  function reset() { error = ""; skipSetup = false }
+  function reset() { error = ""; skipSetup = false; settingsOpen = false }
   function switchView() { view = view === "growth" ? "money" : "growth" }
   function submit() {
     if (!service || service.saving) return
@@ -68,6 +76,7 @@ Column {
     var p = parsed
     if (!p) return service.t("input.hint")
     if (!p.ok) return service.t("entry." + p.error).replace("%1", p.amount || "")
+    if (service.readOnly) return service.t("entry.read-only")
     if (accountMissing) return service.t("input.account-missing").arg(p.account)
     var code = targetAccount ? targetAccount.currency : service.currency
     var parts = [(p.nature === "income" ? "+" : "−") + service.plainMoney(p.amount, code), p.name]
@@ -83,6 +92,7 @@ Column {
     visible: root.showSetup
     service: root.service
     onDemoRequested: root.skipSetup = true
+    onBackRequested: root.settingsOpen = false
   }
 
   Column {
@@ -97,7 +107,7 @@ Column {
         id: input
         width: parent.width
         foreground: Commons.Color.popups.text
-        placeholderText: root.service ? root.service.t("input.placeholder") : ""
+        placeholderText: !root.service ? "" : root.service.t(root.service.readOnly ? "input.placeholder-view" : "input.placeholder")
         enabled: !root.service || !root.service.saving
         onAccepted: root.submit()
         onTextEdited: root.error = ""
@@ -110,7 +120,7 @@ Column {
       Hint {
         width: parent.width
         leftPadding: Style.spacing.controlPaddingX
-        color: root.error || root.accountMissing ? Commons.Color.urgent : (root.parsed && root.parsed.ok) || (root.command && root.command.ok) ? Commons.Color.popups.text : Util.alpha(Commons.Color.popups.text, 0.65)
+        color: root.error || root.accountMissing ? Commons.Color.urgent : (root.parsed && root.parsed.ok && !root.service.readOnly) || (root.command && root.command.ok) ? Commons.Color.popups.text : Util.alpha(Commons.Color.popups.text, 0.65)
         text: root.preview()
       }
     }
@@ -128,12 +138,12 @@ Column {
           id: bannerRow
           anchors.centerIn: parent
           width: parent.width - Style.space(20)
-          implicitHeight: Math.max(bannerText.implicitHeight, bannerAction.visible ? bannerAction.implicitHeight : 0)
+          implicitHeight: Math.max(bannerText.implicitHeight, bannerAction.visible ? bannerAction.implicitHeight : 0, bannerClose.visible ? bannerClose.implicitHeight : 0)
           Hint {
             id: bannerText
             anchors.left: parent.left
-            anchors.right: bannerAction.visible ? bannerAction.left : parent.right
-            anchors.rightMargin: bannerAction.visible ? Style.space(8) : 0
+            anchors.right: bannerAction.visible ? bannerAction.left : bannerClose.visible ? bannerClose.left : parent.right
+            anchors.rightMargin: bannerAction.visible || bannerClose.visible ? Style.space(8) : 0
             anchors.verticalCenter: parent.verticalCenter
             wrapMode: Text.Wrap
             color: banner.modelData.urgent ? Commons.Color.urgent : Commons.Color.popups.text
@@ -147,6 +157,14 @@ Column {
             bordered: true
             text: root.service ? root.service.t("banner.connect") : ""
             onClicked: root.skipSetup = false
+          }
+          Ui.PanelActionButton {
+            id: bannerClose
+            anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+            visible: !!banner.modelData.dismiss
+            iconText: "󰅖"; foreground: Commons.Color.popups.text
+            tooltipText: root.service ? root.service.t("action.dismiss") : ""
+            onClicked: root.service.dismissNote(banner.modelData.dismiss)
           }
         }
       }
@@ -208,7 +226,12 @@ Column {
           iconText: "󰑐"; foreground: Commons.Color.popups.text
           enabled: !!root.service && !root.service.busy
           tooltipText: root.service ? root.service.t("action.refresh") : ""
-          onClicked: root.service.refresh()
+          onClicked: root.service.refresh(true)
+        }
+        Ui.PanelActionButton {
+          iconText: "󰒓"; foreground: Commons.Color.popups.text
+          tooltipText: root.service ? root.service.t("action.connection") : ""
+          onClicked: { root.settingsOpen = true; setup.firstField.forceActiveFocus() }
         }
         Ui.PanelActionButton {
           iconText: "󰈠"; foreground: Commons.Color.popups.text
