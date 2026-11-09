@@ -7,18 +7,20 @@ import qs.Ui as Ui
 Column {
   id: root
   property var service: null
-  readonly property alias keyField: field
-  readonly property bool urlProblem: !!service && service.setupReason.indexOf("url-") === 0
+  readonly property alias firstField: urlField
+  readonly property bool editing: urlField.activeFocus || keyField.activeFocus
+  readonly property bool hasWorkingData: !!service && service.hasKey && !service.needsSetup
   readonly property string problem: {
     if (!service) return ""
-    if (urlProblem) return service.t("setup." + service.setupReason)
     if (service.setupError) return service.t(service.setupError).replace("%1", service.errorArg)
+    if (service.setupReason.indexOf("url-") === 0) return service.t("setup." + service.setupReason)
     return service.setupReason === "rejected" ? service.t("setup.rejected") : ""
   }
   signal demoRequested()
+  signal backRequested()
   spacing: Style.space(14)
 
-  function submit() { if (service) service.connect(field.text) }
+  function submit() { if (service) service.connect(urlField.text, keyField.text) }
 
   component Step: Row {
     id: step
@@ -51,33 +53,56 @@ Column {
   Column {
     width: parent.width
     spacing: Style.space(8)
-    visible: !root.urlProblem
-    Step { number: "1"; label: root.service ? root.service.t("setup.step-key") : "" }
+    Step { number: "1"; label: root.service ? root.service.t("setup.step-server") : "" }
+    Ui.TextField {
+      id: urlField
+      anchors.left: parent.left; anchors.leftMargin: Style.space(28)
+      width: parent.width - Style.space(28)
+      foreground: Commons.Color.popups.text
+      placeholderText: root.service ? root.service.t("setup.url-placeholder") : ""
+      text: root.service ? root.service.rawUrl : ""
+      inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoAutoUppercase
+      enabled: !root.service || !root.service.connecting
+      onAccepted: keyField.forceActiveFocus()
+      Keys.onEscapePressed: root.backRequested()
+    }
+    Step { number: "2"; label: root.service ? root.service.t("setup.step-key") : "" }
     Ui.Button {
       anchors.left: parent.left; anchors.leftMargin: Style.space(28)
       foreground: Commons.Color.popups.text
       bordered: true
       text: root.service ? root.service.t("setup.open-keys") : ""
-      onClicked: root.service.openApiKeys()
+      onClicked: root.service.openApiKeys(urlField.text)
     }
-    Step { number: "2"; label: root.service ? root.service.t("setup.step-paste") : "" }
+    Step { number: "3"; label: root.service ? root.service.t("setup.step-paste") : "" }
     Ui.TextField {
-      id: field
+      id: keyField
       anchors.left: parent.left; anchors.leftMargin: Style.space(28)
       width: parent.width - Style.space(28)
       password: true
       foreground: Commons.Color.popups.text
-      placeholderText: root.service ? root.service.t("setup.placeholder") : ""
+      placeholderText: !root.service ? "" : root.service.t(root.service.hasKey ? "setup.placeholder-keep" : "setup.placeholder")
       enabled: !root.service || !root.service.connecting
       onAccepted: root.submit()
+      Keys.onEscapePressed: root.backRequested()
     }
-    Ui.Button {
+    Row {
       anchors.left: parent.left; anchors.leftMargin: Style.space(28)
-      foreground: Commons.Color.popups.text
-      bordered: true
-      selected: true
-      text: !root.service ? "" : root.service.connecting ? root.service.t("setup.connecting") : root.service.t("setup.connect")
-      onClicked: root.submit()
+      spacing: Style.space(8)
+      Ui.Button {
+        foreground: Commons.Color.popups.text
+        bordered: true
+        selected: true
+        text: !root.service ? "" : root.service.connecting ? root.service.t("setup.connecting") : root.service.t("setup.connect")
+        onClicked: root.submit()
+      }
+      Ui.Button {
+        visible: root.hasWorkingData
+        foreground: Commons.Color.popups.text
+        bordered: true
+        text: root.service ? root.service.t("setup.back") : ""
+        onClicked: root.backRequested()
+      }
     }
   }
 
@@ -86,11 +111,12 @@ Column {
   Column {
     width: parent.width
     spacing: Style.space(3)
-    Hint { width: parent.width; wrapMode: Text.Wrap; visible: !root.urlProblem; text: root.service ? root.service.t("setup.server").arg(root.service.baseUrl) : "" }
-    Hint { width: parent.width; wrapMode: Text.Wrap; visible: !root.urlProblem; text: root.service ? root.service.t("setup.storage") : "" }
+    Hint { width: parent.width; wrapMode: Text.Wrap; visible: root.hasWorkingData; text: !root.service ? "" : root.service.t(root.service.readOnly ? "setup.access-read" : "setup.access-write") }
+    Hint { width: parent.width; wrapMode: Text.Wrap; text: root.service ? root.service.t("setup.storage") : "" }
   }
 
   Ui.Button {
+    visible: !root.hasWorkingData
     foreground: Commons.Color.popups.text
     text: root.service ? root.service.t("setup.demo") : ""
     onClicked: root.demoRequested()

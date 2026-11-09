@@ -18,7 +18,7 @@ This is an unofficial plugin and is not affiliated with the Sure project.
 ## Requirements
 
 - Omarchy with the shell plugin system
-- A recent Sure release, reachable from this machine (tested with the `stable` image)
+- A recent Sure release, on this computer or on a server you can reach (tested with the `stable` image)
 - A Sure API key with read and write access. A read-only key works for viewing, but entries can't be saved.
 
 ## Install
@@ -27,9 +27,25 @@ This is an unofficial plugin and is not affiliated with the Sure project.
 omarchy plugin add https://github.com/andreiyurik/omarchy-sure-bar --enable
 ```
 
-Click the widget and follow the connect screen. It opens Sure's API keys page, checks the key you paste, and saves it. Until an account exists in Sure, the panel shows demo numbers.
+Click the widget and follow the connect screen. Enter where Sure runs, create an API key, and paste it. The plugin checks both before saving anything, and says what's wrong if it can't connect. Until an account exists in Sure, the panel shows demo numbers. The gear button in the panel brings this screen back.
 
-If Sure is not at `http://localhost:3000`, set **Sure URL** in the widget settings first.
+## Sure on a VPS
+
+Everything works the same as on your own computer. A few things are worth setting up:
+
+- **Use HTTPS.** Your API key travels with every request, so plain HTTP is allowed only for `localhost` unless you turn on the setting. With [Caddy](https://caddyserver.com), this is all it takes:
+  ```
+  sure.example.com {
+  	reverse_proxy localhost:3000
+  }
+  ```
+  Without a domain, use `tailscale serve`, or an SSH tunnel and `http://localhost:3000` as the address: `ssh -N -L 3000:localhost:3000 you@server`.
+- **Keep `SELF_HOSTED=true`,** as in Sure's example compose file. Without it Sure limits an API key to 100 requests an hour.
+- **Set the timezone in Sure's settings.** Servers often run in UTC. If Sure's timezone differs from your computer's, the panel tells you once.
+- **If a login page protects Sure** (Authelia, Cloudflare Access), let `/api` through. API keys can't pass a login page.
+- **A view-only key is fine** if you'd rather not keep a key that can write. Viewing and goals work, and entries are turned off.
+
+When the server can't be reached, the panel keeps your last real numbers and says how old they are. It tries again by itself, and refreshes after the computer wakes up. If a reply gets lost while saving an entry, press Enter again: Sure won't save it twice.
 
 ## Adding entries
 
@@ -58,7 +74,7 @@ Russian works too: `цель 7000`, `неделя 10 предложений кл
 
 With the entry line empty, ↑ and ↓ change the weekly count. The action carries over to the next week with a clean count. On the 1st, the race starts again and last month's result waits in a short review until you dismiss it.
 
-A goal is in your Sure default currency, because the plugin doesn't convert. Changing a goal applies from the current month, so past reviews keep the goal they had.
+A goal is in your Sure default currency unless you name another, as in `goal 7000 USD`. Changing a goal applies from the current month, so past reviews keep the goal they had.
 
 ### Why it works this way
 
@@ -75,6 +91,20 @@ The design draws on published research. None of these studies tested a finance w
 | No points or loot; profit next to revenue; no ceiling at 100% | [Deci et al., 1999](https://doi.org/10.1037/0033-2909.125.6.627); [Ordóñez et al., 2009](https://doi.org/10.5465/amp.2009.37007999) |
 | No revenue streaks | [Silverman & Barasch, 2023](https://doi.org/10.1093/jcr/ucac029) |
 
+## Currencies
+
+Amounts use the symbol and precision your Sure defines, and the number format of your language. Cents appear where they matter: `$9.50`, `$7,000`, `₿0.5`. Entries understand `1,500`, `1.234,56` and, on a currency with three decimals, `1.234`. An entry is saved in the currency of its account.
+
+Sure converts its overall totals itself. Its API doesn't share exchange rates, so for business revenue in another currency you give the plugin a rate:
+
+| You type | What it does |
+| --- | --- |
+| `rate USD 92` | 1 USD counts as 92 in your Sure default currency |
+| `rate USD off` | Removes it |
+| `goal 7000 USD` | A goal in dollars, compared using that rate |
+
+Without a rate, that money isn't guessed at: the panel shows how much is left out and offers to add one. One rate per currency applies to every month, so changing it changes past totals. Rates are never fetched from the internet, so the plugin still talks only to your Sure.
+
 ## Optional hotkey
 
 Add to `~/.config/hypr/bindings.lua`:
@@ -89,7 +119,7 @@ o.bind("SUPER + ALT + M", "Sure finance panel", "omarchy-shell shell toggle andr
 | --- | --- | --- |
 | Sure URL | `http://localhost:3000` | Plain origin of your Sure instance |
 | Allow plain HTTP to non-local hosts | off | See [Privacy and network](#privacy-and-network) |
-| Refresh in the background | on | Turn off to fetch only when you press refresh or save an entry |
+| Refresh in the background | on | Also retries after failures, refreshes after sleep and when you open old data. Turn off to fetch only when you press refresh or save an entry. |
 | Refresh interval | 10 minutes | 1 to 120 |
 | Business tag | `business` | Transactions with this tag count as business |
 | Count all income as revenue | off | Ignores the tag, for people who don't separate business money |
@@ -99,18 +129,19 @@ o.bind("SUPER + ALT + M", "Sure finance panel", "omarchy-shell shell toggle andr
 ## How the numbers work
 
 - Revenue is income on transactions with your business tag. The goal, milestones and the race are recalculated from your transactions every time, so there is no separate game state to lose.
+- Closed months and older revenue are kept locally so refreshes stay quick. Everything is read again once a day and whenever you press refresh.
 - Transfers between your own accounts are ignored. A refund from a supplier looks like income in Sure, so tagging one as business counts it as revenue.
-- Transactions in a currency other than your Sure default are left out of business numbers, and the panel says how many.
+- Business transactions in a currency other than your Sure default count once you set a rate for it. Until then the panel says what is left out.
 - At most the latest 3,000 matching transactions are read. If you have more, the panel warns that lifetime revenue and milestones may be low.
-- The panel warns if Sure's date differs from your computer's, which means Sure's timezone is wrong and entries can land in the wrong month.
+- The panel warns once if Sure's timezone differs from your computer's, because entries near midnight can land on the wrong day.
 
 ## Privacy and network
 
-- The plugin talks only to the Sure URL you set. It has no analytics and no other network access.
+- The plugin talks only to the Sure URL you set. It has no analytics and no other network access. When a connection fails, it also runs `curl` against that URL, without your key, to find out why.
 - While background refresh is on, it makes requests to Sure at the interval you set.
 - Your API key is stored in `~/.config/sure-bar/api-key`, readable only by you, and never leaves for anywhere but your Sure server.
 - Plain HTTP is allowed only for `localhost` and `127.x.x.x` unless you turn on the setting, because it would send your key unencrypted.
-- Your goals and weekly actions are stored only in `~/.config/sure-bar/plan.json`, readable only by you.
+- Your goals and weekly actions are stored only in `~/.config/sure-bar/plan.json`, readable only by you. The last numbers, kept for when Sure can't be reached, are in `snapshot.json` next to it, with the same protection.
 - The eye button hides amounts in the bar and the panel, for screen sharing. The choice is remembered in `~/.config/sure-bar/hide-amounts`.
 - Removing the plugin leaves `~/.config/sure-bar` in place. Delete that folder to remove the key.
 
@@ -121,9 +152,17 @@ English and Russian, following your Omarchy language. Translations live in `i18n
 ## Development
 
 ```bash
-node tests/model.test.js
-node tests/project.test.js
+node tests/model.test.js      # calculations, dates, parsing
+node tests/project.test.js    # translations and code rules
+node tests/service.test.js    # the real service against a fake Sure that misbehaves; needs quickshell
+
+tests/vps/up.sh               # a real Sure behind HTTPS, with a network that can be slowed or cut
+NODE_EXTRA_CA_CERTS=~/.cache/sure-bar-vps/ca.crt node tests/contract.test.js
+node tests/vps/e2e.test.js
+docker compose -f tests/vps/compose.yml down
 ```
+
+CI runs the first three, and checks the API contract against Sure's `stable` and `latest` images every night.
 
 ## License
 

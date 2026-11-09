@@ -1,10 +1,10 @@
 .pragma library
+.import "Currencies.js" as Currencies
 
 // Pure logic only: no QML, no network, no user-facing text. Anything shown to
 // a person is returned as a key or as data and translated by the caller.
 
-var SYMBOLS = {RUB: "₽", USD: "$", EUR: "€", GBP: "£", JPY: "¥", KZT: "₸", UAH: "₴", INR: "₹", CNY: "¥", KRW: "₩", TRY: "₺"}
-var PREFIXED = {USD: true, GBP: true, JPY: true, INR: true, CNY: true, KRW: true}
+var CURRENCY_SIGNS = {"$": "USD", "€": "EUR", "₽": "RUB", "£": "GBP", "¥": "JPY", "₸": "KZT", "₴": "UAH", "₿": "BTC", "РУБ": "RUB"}
 var BUSINESS_ALIASES = ["б", "b", "биз", "biz"]
 var ONE_DAY_AGO = ["вчера", "yesterday"]
 var TWO_DAYS_AGO = ["позавчера"]
@@ -15,17 +15,17 @@ var NICE_STEPS = [1, 1.5, 2, 2.5, 3, 4, 5, 7.5, 10]
 var OFF_WORDS = ["off", "0", "нет", "убрать"]
 var MAX_ACTIONS = 60
 
-// Sure's config/currencies.yml; every currency not listed here uses 100.
-var MINOR_UNITS = {}
-;[[1, "JPY BYR XBC PYG RWF XBD XDR XOF XPD XPF XPT XTS GBX UGX VND VUV XAF XAG XAU XBA XBB CLP DJF BIF KMF KRW GNF HUF ISK"],
-  [5, "MGA MRU"], [1000, "OMR TND BHD KWD LYD IQD JOD"], [10000, "CLF"], [100000000, "BTC DOGE"]
-].forEach(function(group) { group[1].split(" ").forEach(function(code) { MINOR_UNITS[code] = group[0] }) })
-
 function pad(n) { return n < 10 ? "0" + n : String(n) }
 function iso(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) }
-function symbol(currency) { return SYMBOLS[currency] || String(currency || "") }
+function info(currency) { return Currencies.TABLE[currency] || null }
+function symbol(currency) { var c = info(currency); return (c && c[0]) || String(currency || "") }
+function precision(currency) { var c = info(currency); return c ? c[2] : 2 }
+function currencyCode(token) {
+  var text = String(token || "").toUpperCase()
+  return info(text) ? text : CURRENCY_SIGNS[text] || ""
+}
 function num(value) { var n = Number(value); return isFinite(n) ? n : 0 }
-function fromMinor(value, currency) { return num(value) / (MINOR_UNITS[currency] || 100) }
+function fromMinor(value, currency) { var c = info(currency); return num(value) / (c ? c[3] : 100) }
 
 // A plain origin or nothing: the value reaches a shell eval in omarchy-launch-webapp.
 // Plain HTTP would expose the API key, so it is limited to this machine unless allowed.
@@ -37,20 +37,109 @@ function origin(raw, allowInsecure) {
   return {ok: true, url: m[0]}
 }
 
-function amountFrom(whole, fraction, thousands) {
-  return parseFloat(whole.replace(/ /g, "") + (fraction ? "." + fraction : "")) * (thousands ? 1000 : 1)
+// "1,500" is thousands unless the currency really has three decimals; the last separator of two is the decimal.
+function amountValue(token, places) {
+  var text = String(token).replace(/ /g, ""), comma = text.lastIndexOf(","), dot = text.lastIndexOf("."), at = Math.max(comma, dot)
+  if (at < 0) return parseFloat(text)
+  var mark = text[at], tail = text.length - at - 1, head = text.slice(0, at).replace(/[,.]/g, "")
+  var both = comma >= 0 && dot >= 0, repeated = text.split(mark).length > 2
+  var decimal = both || (!repeated && (tail !== 3 || places >= 3 || /^0+$/.test(head)))
+  return decimal ? parseFloat(head + "." + text.slice(at + 1)) : parseFloat(text.replace(/[,.]/g, ""))
+}
+
+function fitsPlaces(amount, places) {
+  var scaled = amount * Math.pow(10, places)
+  return Math.abs(scaled - Math.round(scaled)) < 1e-6
+}
+
+// People paste "sure.example.com"; only this machine defaults to plain HTTP.
+function normalizeServer(raw) {
+  var text = String(raw || "").trim()
+  if (!text || /^[a-z][a-z0-9+.-]*:\/\//i.test(text)) return text
+  return (/^(localhost|127(\.\d{1,3}){3})([:/]|$)/i.test(text) ? "http://" : "https://") + text
+}
+
+// What went wrong, from what came back. A non-JSON answer was not written by Sure.
+function failureKey(status, isJson) {
+  if (status === -1) return "error.too-large"
+  if (status === 0) return "error.unreachable"
+  if (status === 429) return "error.rate-limited"
+  if (status === 401 || status === 403) return !isJson ? "error.proxy" : status === 401 ? "error.rejected" : "error.forbidden"
+  if (status === 404) return isJson ? "error.not-found" : "error.not-sure"
+  if (status >= 500) return "error.server"
+  if (status >= 200 && status < 300) return "error.not-sure"
+  return "error.http"
+}
+
+// Exit codes from `curl`, used to explain a connection the HTTP client only reports as failed.
+function probeKey(exitCode) {
+  if (exitCode === 6) return "error.dns"
+  if (exitCode === 7) return "error.refused"
+  if (exitCode === 28) return "error.timeout"
+  return [51, 58, 60, 77, 80, 83, 90, 91].indexOf(exitCode) >= 0 ? "error.tls" : "error.unreachable"
+}
+
+function retryable(key) {
+  return ["error.unreachable", "error.dns", "error.refused", "error.timeout", "error.tls", "error.server", "error.rate-limited"].indexOf(key) >= 0
+}
+
+function retryDelay(attempt, retryAfterSeconds, baseMs, maxMs) {
+  if (retryAfterSeconds > 0) return Math.min(retryAfterSeconds, 3600) * 1000
+  return Math.min(maxMs, baseMs * Math.pow(2, Math.min(attempt, 16)))
+}
+
+// A server in another timezone can be a day behind, and then today's entries look like the future.
+function latestDay(serverDay, localDate) {
+  var local = iso(localDate), server = String(serverDay).slice(0, 10)
+  return new Date((server > local ? server : local) + "T00:00:00")
+}
+
+function externalId(nowMs, random) {
+  return "sure-bar-" + Math.floor(nowMs).toString(36) + "-" + Math.floor(random * 1e12).toString(36)
+}
+
+// Revenue before this date is taken from the local cache: last month onward can still change.
+function windowStart(currentMonth) { return monthsBack(currentMonth, 2)[0] }
+
+function cacheKey(baseUrl, businessTag, trackAll) { return [baseUrl, String(businessTag).toLowerCase(), trackAll === true].join("|") }
+
+function needsFullRefresh(cache, key, today, forced) { return forced === true || !cache || cache.key !== key || cache.day !== today }
+
+function slimTransaction(t) {
+  return {date: String(t.date).slice(0, 10), amount_cents: num(t.amount_cents), currency: String(t.currency), classification: String(t.classification), transfer: !!t.transfer}
+}
+
+function mergeTransactions(cached, fresh, start) {
+  return (cached || []).filter(function(t) { return t.date < start }).concat(fresh)
+}
+
+// A short window can hold fewer rows than the list shows, so older known ones fill the rest.
+function mergeRecent(fresh, previous, start, limit) {
+  var known = {}
+  fresh.forEach(function(row) { known[row.id] = true })
+  return fresh.concat((previous || []).filter(function(row) { return !known[row.id] && String(row.date) < start })).slice(0, limit)
+}
+
+function readSnapshot(raw, key) {
+  if (!raw || raw.version !== 1 || raw.key !== key || !(raw.savedAt > 0) || !raw.cache || !Array.isArray(raw.cache.transactions)) return null
+  var p = raw.payload
+  if (!p || p.status !== "ok" || !Array.isArray(p.series) || !p.game || !p.business || !Array.isArray(p.recent)) return null
+  return raw
+}
+
+function timezoneWarning(zone, remoteOffset, localOffset) {
+  if (!zone || !remoteOffset || !localOffset || remoteOffset === localOffset) return null
+  return {key: "warn.timezone", arg: zone + " (UTC" + remoteOffset + ")", arg2: "UTC" + localOffset, dismiss: "tz:" + zone + "|" + localOffset}
 }
 
 // "450 coffee", "+1200 client #b", "1.5k lunch #b @cash yesterday"
-function parseEntry(raw, today, businessTag) {
+function parseEntry(raw, today, businessTag, placesFor) {
   var text = String(raw || "").trim()
   if (!text) return {ok: false, error: "empty"}
-  var m = text.match(/^(\+?)\s*(\d{1,3}(?: \d{3})+|\d+)(?:[.,](\d{1,2}))?\s*([кkКK])?(?:\s+|$)(.*)$/)
+  var m = text.match(/^(\+?)\s*(\d{1,3}(?:[ ,.]\d{3})+(?:[.,]\d{1,8})?|\d+(?:[.,]\d{1,8})?)\s*([кkКK])?(?:\s+|$)(.*)$/)
   if (!m) return {ok: false, error: "amount-first"}
-  var amount = amountFrom(m[2], m[3], m[4])
-  if (!(amount > 0) || amount > 1e12) return {ok: false, error: "bad-amount"}
   var tags = [], account = "", offset = 0, words = []
-  m[5].split(/\s+/).forEach(function(word) {
+  m[4].split(/\s+/).forEach(function(word) {
     if (!word) return
     var lower = word.toLowerCase()
     if (word.length > 1 && word[0] === "#") {
@@ -62,6 +151,9 @@ function parseEntry(raw, today, businessTag) {
     else if (TWO_DAYS_AGO.indexOf(lower) >= 0) offset = 2
     else words.push(word)
   })
+  var places = placesFor ? placesFor(account) : 2
+  var amount = amountValue(m[2], places) * (m[3] ? 1000 : 1)
+  if (!(amount > 0) || amount > 1e12 || !fitsPlaces(amount, places)) return {ok: false, error: "bad-amount"}
   var name = words.join(" ").slice(0, 120)
   if (!name) return {ok: false, error: "name-missing", amount: m[2]}
   var date = new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset)
@@ -70,23 +162,41 @@ function parseEntry(raw, today, businessTag) {
 }
 
 // "goal 7000", "week 10 client offers". Entries start with an amount, so these can't collide.
-function parseCommand(raw) {
-  var m = String(raw || "").trim().match(/^(goal|цель|week|неделя)(?:\s+(.*))?$/i)
+function parseCommand(raw, mainPlaces) {
+  var m = String(raw || "").trim().match(/^(goal|цель|week|неделя|rate|курс)(?:\s+(.*))?$/i)
   if (!m) return null
-  var kind = /^(goal|цель)$/i.test(m[1]) ? "goal" : "action"
+  var kind = /^(goal|цель)$/i.test(m[1]) ? "goal" : /^(week|неделя)$/i.test(m[1]) ? "action" : "rate"
   var rest = (m[2] || "").trim()
+  if (kind === "rate") return parseRate(rest)
   if (OFF_WORDS.indexOf(rest.toLowerCase()) >= 0) return {ok: true, kind: kind, off: true}
-  if (kind === "goal") {
-    var a = rest.match(/^(\d{1,3}(?: \d{3})+|\d+)(?:[.,](\d{1,2}))?\s*([кkКK])?$/)
-    var amount = a ? amountFrom(a[1], a[2], a[3]) : 0
-    return amount > 0 && amount <= 1e12 ? {ok: true, kind: kind, off: false, amount: amount} : {ok: false, kind: kind, error: "goal-format"}
-  }
+  if (kind === "goal") return parseGoal(rest, mainPlaces === undefined ? 2 : mainPlaces)
   var w = rest.match(/^(\d{1,3})\s+(.+)$/), target = w ? parseInt(w[1], 10) : 0
   return target > 0 ? {ok: true, kind: kind, off: false, target: target, text: w[2].slice(0, 80)} : {ok: false, kind: kind, error: "action-format"}
 }
 
+function parseGoal(rest, mainPlaces) {
+  var bad = {ok: false, kind: "goal", error: "goal-format"}
+  var a = rest.match(/^([^\d\s]+)?\s*(\d{1,3}(?:[ ,.]\d{3})+(?:[.,]\d{1,8})?|\d+(?:[.,]\d{1,8})?)\s*([кkКK](?=\s|$))?\s*(\S+)?$/)
+  if (!a || (a[1] && a[4])) return bad
+  var currency = a[1] || a[4] ? currencyCode(a[1] || a[4]) : ""
+  if ((a[1] || a[4]) && !currency) return bad
+  var places = currency ? precision(currency) : mainPlaces
+  var amount = amountValue(a[2], places) * (a[3] ? 1000 : 1)
+  return amount > 0 && amount <= 1e12 ? {ok: true, kind: "goal", off: false, amount: amount, currency: currency} : bad
+}
+
+function parseRate(rest) {
+  var bad = {ok: false, kind: "rate", error: "rate-format"}
+  var p = rest.match(/^(\S+)\s+(\S+)$/), currency = p ? currencyCode(p[1]) : ""
+  if (!currency) return bad
+  if (OFF_WORDS.indexOf(p[2].toLowerCase()) >= 0) return {ok: true, kind: "rate", off: true, currency: currency}
+  if (!/^\d+([.,]\d{1,8})?$/.test(p[2])) return bad
+  var value = parseFloat(p[2].replace(",", "."))
+  return value > 0 && value <= 1e9 ? {ok: true, kind: "rate", off: false, currency: currency, value: value} : bad
+}
+
 function clone(value) { return JSON.parse(JSON.stringify(value)) }
-function emptyPlan() { return {goals: {}, actions: [], reviewed: ""} }
+function emptyPlan() { return {goals: {}, actions: [], reviewed: "", dismissed: [], rates: {}} }
 
 // The plan file can be edited by hand, so nothing in it is trusted.
 function normalizePlan(raw) {
@@ -107,6 +217,12 @@ function normalizePlan(raw) {
       : {week: a.week, text: a.text.slice(0, 80), target: Math.min(999, Math.floor(num(a.target))), done: Math.max(0, Math.floor(num(a.done)))}
   }).sort(byWeek).slice(-MAX_ACTIONS)
   if (/^\d{4}-\d{2}$/.test(raw.reviewed)) plan.reviewed = raw.reviewed
+  var rates = raw.rates && typeof raw.rates === "object" ? raw.rates : {}
+  Object.keys(rates).forEach(function(code) {
+    var rate = rates[code]
+    if (info(code) && rate && num(rate.value) > 0 && typeof rate.base === "string") plan.rates[code] = {value: num(rate.value), base: rate.base.slice(0, 12)}
+  })
+  if (Array.isArray(raw.dismissed)) plan.dismissed = raw.dismissed.filter(function(id) { return typeof id === "string" }).slice(-20)
   return plan
 }
 
@@ -122,6 +238,31 @@ function setGoal(plan, month, amount, currency) {
   var next = clone(plan)
   next.goals[month] = amount ? {amount: amount, currency: currency} : null
   return next
+}
+
+function setRate(plan, currency, value, base) {
+  var next = clone(plan)
+  next.rates[currency] = {value: value, base: base}
+  return next
+}
+
+function clearRate(plan, currency) {
+  var next = clone(plan)
+  delete next.rates[currency]
+  return next
+}
+
+// A rate counts only against the main currency it was entered for.
+function rateFor(plan, currency, base) {
+  var rate = plan && plan.rates ? plan.rates[currency] : null
+  return rate && rate.base === base ? rate.value : null
+}
+
+// null means no way to compare, which callers must show rather than treat as zero.
+function convertAmount(plan, amount, from, to) {
+  if (from === to) return amount
+  var rate = rateFor(plan, from, to)
+  return rate === null ? null : amount * rate
 }
 
 function weekStart(date) {
@@ -184,14 +325,14 @@ function goalStages(target) {
   return stages.concat([target])
 }
 
-function goalProgress(target, current, day, daysInMonth) {
+function goalProgress(target, current, day, daysInMonth, original) {
   var stages = goalStages(target)
   var ahead = stages.filter(function(stage) { return stage > current })
   return {target: target, current: current, stages: stages, passed: stages.length - ahead.length,
     percent: Math.floor(current / target * 100), reached: current >= target, halfway: current >= target / 2,
     over: Math.max(0, current - target), remaining: Math.max(0, target - current),
     stage: ahead.length ? {target: ahead[0], remaining: ahead[0] - current} : null,
-    paceAmount: target * day / daysInMonth}
+    paceAmount: target >= 100 ? Math.round(target * day / daysInMonth) : target * day / daysInMonth, original: original || null}
 }
 
 function pace(spent, budget, day, daysInMonth) {
@@ -202,12 +343,28 @@ function pace(spent, budget, day, daysInMonth) {
     status: percent >= 100 ? "over" : percent > elapsed + 10 ? "warn" : "ok"}
 }
 
-function formatMoney(value, currency, separator) {
-  var n = Math.round(num(value)), digits = String(Math.abs(n)), out = ""
-  var gap = separator === undefined ? " " : separator
-  while (digits.length > 3) { out = gap + digits.slice(-3) + out; digits = digits.slice(0, -3) }
-  var sign = n < 0 ? "−" : "", sym = symbol(currency)
-  return PREFIXED[currency] ? sign + sym + digits + out : sign + digits + out + " " + sym
+// Whole amounts stay clean; cents appear where they matter, and crypto keeps its precision.
+function displayPlaces(value, currency) {
+  var places = precision(currency), abs = Math.abs(num(value))
+  if (places === 0 || (abs >= 1000 && places <= 2)) return 0
+  var fixed = abs.toFixed(places)
+  if (parseFloat(fixed) === Math.floor(parseFloat(fixed))) return 0
+  if (places <= 2) return places
+  var trimmed = fixed.replace(/0+$/, "")
+  return trimmed.length - trimmed.indexOf(".") - 1
+}
+
+// format: {group, decimal, prefix, spaced}, or just the group separator. Unset fields follow Sure's table.
+function formatMoney(value, currency, format) {
+  var f = typeof format === "string" ? {group: format} : format || {}
+  var group = f.group === undefined ? " " : f.group, c = info(currency)
+  var parts = Math.abs(num(value)).toFixed(displayPlaces(value, currency)).split("."), digits = parts[0], out = ""
+  while (digits.length > 3) { out = group + digits.slice(-3) + out; digits = digits.slice(0, -3) }
+  var body = digits + out + (parts[1] ? (f.decimal || ".") + parts[1] : "")
+  var sign = num(value) < 0 && parseFloat(parts.join(".")) !== 0 ? "−" : "", sym = symbol(currency)
+  var first = f.prefix === undefined ? !!c && c[1] === 1 : f.prefix
+  if (!first) return sign + body + " " + sym
+  return sign + sym + (f.spaced || /[A-Za-z]$/.test(sym) ? " " : "") + body
 }
 
 function shortMoney(value, format) {
@@ -217,7 +374,8 @@ function shortMoney(value, format) {
   if (n >= 1e6) return sign + f.m.replace("%1", text(Math.round(n / 1e5) / 10))
   if (n >= 1e4) return sign + f.k.replace("%1", text(Math.round(n / 1e3)))
   if (n >= 1e3) return sign + f.k.replace("%1", text(Math.round(n / 100) / 10))
-  return sign + String(Math.round(n))
+  var places = n === Math.floor(n) ? 0 : n < 10 ? 2 : n < 100 ? 1 : 0
+  return sign + text(parseFloat(n.toFixed(places)))
 }
 
 // Oldest first, ending with currentMonth ("YYYY-MM-01").
@@ -252,15 +410,15 @@ function monthSummary(point) {
 // Moving money between your own accounts is neither revenue nor spending.
 function counted(transaction) { return !transaction.transfer }
 
-// Sum tagged transactions per month; other currencies are counted, not converted.
-function aggregateTagged(transactions, months, currency) {
+// Sum tagged transactions per month; a currency without a rate is counted, not guessed.
+function aggregateTagged(transactions, months, currency, plan) {
   var byMonth = {}, skipped = 0
   months.forEach(function(month) { byMonth[month.slice(0, 7)] = {month: month, income: 0, spending: 0} })
   transactions.forEach(function(t) {
     var bucket = byMonth[String(t.date).slice(0, 7)]
     if (!bucket || !counted(t)) return
-    if (t.currency !== currency) { skipped++; return }
-    var amount = fromMinor(t.amount_cents, currency)
+    var amount = convertAmount(plan, fromMinor(t.amount_cents, t.currency), t.currency, currency)
+    if (amount === null) { skipped++; return }
     if (t.classification === "income") bucket.income += amount
     else bucket.spending += amount
   })
@@ -296,10 +454,20 @@ function game(transactions, asOf, currency, plan) {
   var curKey = today.slice(0, 7), prevDate = new Date(y, mo - 1, 1)
   var prevKey = iso(prevDate).slice(0, 7), prevDays = new Date(y, mo, 0).getDate()
   var limitDay = Math.min(day, prevDays), months = {}, incomes = [], prevSame = 0
+  var activePlan = plan || emptyPlan(), missing = {}, used = {}
   transactions.forEach(function(t) {
     var date = String(t.date).slice(0, 10)
-    if (!counted(t) || t.currency !== currency || date > today) return
-    var key = date.slice(0, 7), amount = fromMinor(t.amount_cents, currency)
+    if (!counted(t) || date > today) return
+    var key = date.slice(0, 7), own = fromMinor(t.amount_cents, t.currency), amount = convertAmount(activePlan, own, t.currency, currency)
+    if (amount === null) {
+      if (t.classification === "income") {
+        var gap = missing[t.currency] || (missing[t.currency] = {currency: t.currency, count: 0, amount: 0})
+        gap.count++
+        gap.amount += own
+      }
+      return
+    }
+    if (t.currency !== currency) used[t.currency] = true
     var bucket = months[key] || (months[key] = {income: 0, spending: 0})
     if (t.classification === "income") {
       bucket.income += amount
@@ -309,9 +477,10 @@ function game(transactions, asOf, currency, plan) {
   })
   incomes.sort(function(a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0 })
 
-  var activePlan = plan || emptyPlan(), setGoalValue = goalFor(activePlan, curKey)
-  var usableGoal = setGoalValue && setGoalValue.currency === currency ? setGoalValue : null
-  var ladderBase = usableGoal && usableGoal.amount >= 4 ? usableGoal.amount : 0
+  var setGoalValue = goalFor(activePlan, curKey)
+  var goalTarget = setGoalValue ? convertAmount(activePlan, setGoalValue.amount, setGoalValue.currency, currency) : null
+  if (goalTarget !== null && setGoalValue.currency !== currency) used[setGoalValue.currency] = true
+  var ladderBase = goalTarget !== null && goalTarget >= 4 ? Math.round(goalTarget) : 0
   var targets = ladderBase ? [1].concat(GOAL_LADDER.map(function(times) { return Math.round(ladderBase * times) })) : LADDER
 
   var achieved = [], total = 0, step = 0
@@ -357,8 +526,10 @@ function game(transactions, asOf, currency, plan) {
   var daysInMonth = new Date(y, mo + 1, 0).getDate()
   return {
     monthKey: curKey, week: weekStart(asOf), ladderBase: ladderBase,
-    goal: usableGoal ? goalProgress(usableGoal.amount, current, day, daysInMonth) : null,
-    goalCurrency: setGoalValue && !usableGoal ? setGoalValue.currency : "",
+    goal: goalTarget !== null ? goalProgress(goalTarget, current, day, daysInMonth, setGoalValue.currency !== currency ? setGoalValue : null) : null,
+    goalCurrency: setGoalValue && goalTarget === null ? setGoalValue.currency : "",
+    unconverted: Object.keys(missing).sort().map(function(code) { return missing[code] }),
+    ratesUsed: Object.keys(used).sort().map(function(code) { return {currency: code, value: rateFor(activePlan, code, currency)} }),
     action: actionFor(activePlan, weekStart(asOf)),
     review: monthReview(activePlan, prevKey, months, currency),
     profit: months[curKey] ? months[curKey].income - months[curKey].spending : 0,
@@ -372,11 +543,12 @@ function game(transactions, asOf, currency, plan) {
 function monthReview(plan, month, months, currency) {
   if (plan.reviewed >= month) return null
   var goal = goalFor(plan, month)
-  if (!goal || goal.currency !== currency) return null
+  var target = goal ? convertAmount(plan, goal.amount, goal.currency, currency) : null
+  if (target === null) return null
   var bucket = months[month] || {income: 0, spending: 0}, best = 0
   Object.keys(months).forEach(function(key) { if (key < month) best = Math.max(best, months[key].income) })
-  return {key: month, monthIndex: monthIndex(month + "-01"), target: goal.amount, income: bucket.income, profit: bucket.income - bucket.spending,
-    percent: Math.floor(bucket.income / goal.amount * 100), reached: bucket.income >= goal.amount,
+  return {key: month, monthIndex: monthIndex(month + "-01"), target: target, income: bucket.income, profit: bucket.income - bucket.spending,
+    percent: Math.floor(bucket.income / target * 100), reached: bucket.income >= target,
     best: bucket.income > 0 && bucket.income > best, weeks: actionWeeks(plan, month)}
 }
 
@@ -394,7 +566,7 @@ var DEMO_NAMES = {groceries: "Groceries", ads: "Ads", cafe: "Cafes", subscriptio
 function demoPlan(today, plan, currency, names) {
   var out = clone(plan || emptyPlan()), month = iso(today).slice(0, 7), week = weekStart(today)
   var goal = goalFor(out, month)
-  if (!goal || goal.currency !== currency) out.goals[month] = {amount: 150000, currency: currency}
+  if (!goal || convertAmount(out, goal.amount, goal.currency, currency) === null) out.goals[month] = {amount: 150000, currency: currency}
   if (!actionFor(out, week)) out.actions.push({week: week, text: names.action, target: 10, done: 4, demo: true})
   out.reviewed = iso(new Date(today.getFullYear(), today.getMonth(), 0)).slice(0, 7)
   return out
@@ -411,7 +583,7 @@ function demo(today, reason, currency, names, plan) {
   var days = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()
   var cats = [[n.groceries, 28000, 31000], [n.ads, 20000, 14500], [n.cafe, 12000, 9800], [n.subscriptions, 8000, 3200]]
   // Fake revenue follows a real goal, so the demo never claims it is already beaten.
-  var effectivePlan = demoPlan(today, plan, code, n), scale = goalFor(effectivePlan, iso(today).slice(0, 7)).amount / 150000
+  var effectivePlan = demoPlan(today, plan, code, n), demoGoal = goalFor(effectivePlan, iso(today).slice(0, 7)), scale = convertAmount(effectivePlan, demoGoal.amount, demoGoal.currency, code) / 150000
   var taggedDemo = []
   months.forEach(function(month, i) {
     [[3, 0.4], [12, 0.35], [22, 0.25]].forEach(function(p) {

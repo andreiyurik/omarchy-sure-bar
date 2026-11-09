@@ -47,7 +47,7 @@ Ui.BarWidget {
     dimmed: !root.service || root.service.isDemo || root.service.message !== ""
     tooltipText: root.tooltip()
     onPressed: function(code) {
-      if (code === Qt.MiddleButton) { if (root.service) root.service.refresh() }
+      if (code === Qt.MiddleButton) { if (root.service) root.service.refresh(true) }
       else root.toggle()
     }
     Accessible.role: Accessible.Button

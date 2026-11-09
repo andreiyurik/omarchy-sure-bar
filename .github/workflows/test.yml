@@ -1,9 +1,13 @@
 name: Test
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 4 * * *"
 permissions:
   contents: read
 jobs:
-  test:
+  logic:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -12,3 +16,28 @@ jobs:
           node-version: 22
       - run: node tests/model.test.js
       - run: node tests/project.test.js
+  service:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - run: pacman -Syu --noconfirm quickshell qt6-base nodejs curl openssl
+      - uses: actions/checkout@v4
+      - run: node tests/service.test.js
+  contract:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tag: [stable, latest]
+    env:
+      SURE_IMAGE: ghcr.io/we-promise/sure:${{ matrix.tag }}
+      SURE_BAR_VPS_STATE: /tmp/sure-bar-vps
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: tests/vps/up.sh
+      - run: node tests/contract.test.js
+        env:
+          NODE_EXTRA_CA_CERTS: /tmp/sure-bar-vps/ca.crt

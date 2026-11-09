@@ -10,7 +10,7 @@ Ui.Panel {
   property Item anchorItem: null
   property var hostWidget: null
   property var service: null
-  onOpenedChanged: if (opened) content.reset()
+  onOpenedChanged: if (opened) { content.reset(); if (service) service.refreshIfStale() }
 
   Ui.KeyboardPanel {
     id: popup
