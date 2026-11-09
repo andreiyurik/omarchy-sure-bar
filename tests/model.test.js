@@ -54,6 +54,8 @@ assert.strictEqual(M.fromMinor(12345, "RUB"), 123.45)
 assert.strictEqual(M.fromMinor(500, "JPY"), 500)
 assert.strictEqual(M.fromMinor(1500, "KWD"), 1.5)
 assert.strictEqual(M.fromMinor(50000000, "BTC"), 0.5)
+assert.strictEqual(M.fromMinor(5e17, "ETH"), 0.5)
+assert.strictEqual(M.formatMoney(0.5, "ETH"), "Ξ0.5")
 assert.strictEqual(Object.keys(M.Currencies.TABLE).length >= 180, true)
 
 // Formatting
