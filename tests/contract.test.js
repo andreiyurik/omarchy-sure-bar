@@ -1,7 +1,7 @@
 // Checks that a real Sure still answers the way the plugin expects.
 // Start the stand with tests/vps/up.sh, then:
 //   NODE_EXTRA_CA_CERTS=~/.cache/sure-bar-vps/ca.crt node tests/contract.test.js
-const fs = require("fs"), os = require("os"), path = require("path"), assert = require("assert")
+const fs = require("fs"), os = require("os"), path = require("path"), vm = require("vm"), assert = require("assert"), {execFileSync} = require("child_process")
 const state = process.env.SURE_BAR_VPS_STATE || path.join(os.homedir(), ".cache/sure-bar-vps")
 const base = (process.env.SURE_URL || "https://127.0.0.1.nip.io:18443") + "/api/v1"
 const keys = Object.fromEntries(fs.readFileSync(path.join(state, "keys"), "utf8").trim().split("\n").map(line => line.split(" ").slice(1)))
@@ -61,5 +61,14 @@ const today = new Date().toISOString().slice(0, 10), month = today.slice(0, 8) +
   const readOnly = await call("POST", "/transactions", {key: keys.ro, body: {transaction: entry}})
   assert.strictEqual(readOnly.status, 403)
   assert.strictEqual((await call("DELETE", "/transactions/" + first.json.id)).status, 200)
+  // The currency table is a copy of Sure's; the plugin's arithmetic depends on it.
+  const compose = path.join(__dirname, "vps/compose.yml")
+  const script = 'require "yaml"; require "json"; t = YAML.load_file("/rails/config/currencies.yml"); puts t.values.map { |c| [c["iso_code"], [c["default_precision"] || 2, c["minor_unit_conversion"] || 100]] }.to_h.to_json'
+  const real = JSON.parse(execFileSync("docker", ["compose", "-f", compose, "exec", "-T", "web", "ruby", "-e", script], {encoding: "utf8", stdio: ["ignore", "pipe", "ignore"]}))
+  const table = vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../Currencies.js"), "utf8").replace(".pragma library", "") + ";TABLE")
+  for (const [code, [places, minor]] of Object.entries(real)) {
+    assert(table[code], "Currencies.js lacks " + code)
+    assert.deepStrictEqual([table[code][2], table[code][3]], [places, minor], "Currencies.js differs for " + code)
+  }
   console.log("contract tests passed")
 })().catch(error => { console.error(error); process.exit(1) })

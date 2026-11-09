@@ -23,7 +23,7 @@ for (const file of qml) {
   const source = read(file)
   for (const match of source.matchAll(/\b(?:tn?)\("([a-z][a-z-]*\.[a-z-]+)"/g)) assert(match[1] in en, file + ": missing key " + match[1])
 }
-for (const key of ["empty", "amount-first", "bad-amount", "name-missing", "goal-format", "action-format"]) assert("entry." + key in en, key)
+for (const key of ["empty", "amount-first", "bad-amount", "name-missing", "goal-format", "action-format", "rate-format"]) assert("entry." + key in en, key)
 for (const key of ["url-invalid", "url-insecure"]) assert("setup." + key in en, key)
 for (const key of ["forced", "no-key", "no-accounts", "unreachable"]) assert("demo.reason." + key in en, key)
 

@@ -1,7 +1,9 @@
 // Run with: node tests/model.test.js
 const fs = require("fs"), path = require("path"), vm = require("vm"), assert = require("assert")
 const src = fs.readFileSync(path.join(__dirname, "..", "Model.js"), "utf8").replace(".pragma library", "")
-const M = {}; vm.createContext(M); vm.runInContext(src, M)
+const M = {}; vm.createContext(M)
+M.Currencies = vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "Currencies.js"), "utf8").replace(".pragma library", "") + ";({TABLE})")
+vm.runInContext(src.replace('.import "Currencies.js" as Currencies', ""), M)
 const plain = value => JSON.parse(JSON.stringify(value))
 const today = new Date(2026, 10, 9), parse = s => plain(M.parseEntry(s, today, "business"))
 
@@ -22,6 +24,23 @@ assert.strictEqual(parse("0 coffee").error, "bad-amount")
 assert.strictEqual(parse("450").error, "name-missing")
 for (const bad of ["450 #b", "450coffee"]) assert(!parse(bad).ok, bad)
 
+// Thousands and decimals, by what the account's currency allows
+assert.strictEqual(parse("1,500 lunch").amount, 1500)
+assert.strictEqual(parse("1.500 lunch").amount, 1500)
+assert.strictEqual(parse("1,500,000 car").amount, 1500000)
+assert.strictEqual(parse("1,234.56 x").amount, 1234.56)
+assert.strictEqual(parse("1.234,56 x").amount, 1234.56)
+assert.strictEqual(parse("12,5 x").amount, 12.5)
+assert.strictEqual(parse("1,5к x").amount, 1500)
+const places = n => () => n
+assert.strictEqual(M.parseEntry("1.234 x", today, "b", places(3)).amount, 1.234)
+assert.strictEqual(M.parseEntry("1,234 x", today, "b", places(3)).amount, 1.234)
+assert.strictEqual(M.parseEntry("0.12345678 x", today, "b", places(8)).amount, 0.12345678)
+assert.strictEqual(M.parseEntry("1.5 x", today, "b", places(0)).error, "bad-amount")
+assert.strictEqual(M.parseEntry("1.5k x", today, "b", places(0)).amount, 1500)
+assert.strictEqual(parse("1.2345 x").error, "bad-amount")
+assert.strictEqual(M.parseEntry("5 x @kwd", today, "b", hint => { assert.strictEqual(hint, "kwd"); return 3 }).amount, 5)
+
 // Server address: the API key must not leave the machine unencrypted by accident
 assert.strictEqual(M.origin("http://localhost:3000/").url, "http://localhost:3000")
 assert(M.origin("http://127.0.0.1:3000").ok)
@@ -34,6 +53,8 @@ for (const bad of ["", "localhost:3000", "http://x/$(id)", "http://x;rm", "https
 assert.strictEqual(M.fromMinor(12345, "RUB"), 123.45)
 assert.strictEqual(M.fromMinor(500, "JPY"), 500)
 assert.strictEqual(M.fromMinor(1500, "KWD"), 1.5)
+assert.strictEqual(M.fromMinor(50000000, "BTC"), 0.5)
+assert.strictEqual(Object.keys(M.Currencies.TABLE).length >= 180, true)
 
 // Formatting
 assert.strictEqual(M.formatMoney(-1234567, "RUB"), "−1 234 567 ₽")
@@ -44,6 +65,24 @@ assert.strictEqual(M.shortMoney(1250000), "1.3M")
 assert.strictEqual(M.shortMoney(20000), "20k")
 assert.strictEqual(M.shortMoney(1500), "1.5k")
 assert.strictEqual(M.shortMoney(999), "999")
+assert.strictEqual(M.shortMoney(0.5), "0.5")
+assert.strictEqual(M.shortMoney(12.56), "12.6")
+assert.strictEqual(M.shortMoney(9.99), "9.99")
+
+// Amounts keep the precision that matters
+assert.strictEqual(M.formatMoney(9.99, "USD", ","), "$9.99")
+assert.strictEqual(M.formatMoney(9, "USD", ","), "$9")
+assert.strictEqual(M.formatMoney(1234.56, "USD", ","), "$1,235")
+assert.strictEqual(M.formatMoney(0.5, "BTC"), "₿0.5")
+assert.strictEqual(M.formatMoney(0.12345678, "BTC"), "₿0.12345678")
+assert.strictEqual(M.formatMoney(12.5, "KWD", ","), "د.ك12.5")
+assert.strictEqual(M.formatMoney(1500.4, "JPY", ","), "¥1,500")
+assert.strictEqual(M.formatMoney(100, "CHF"), "CHF 100")
+assert.strictEqual(M.formatMoney(100, "PLN"), "100 zł")
+assert.strictEqual(M.formatMoney(-0.001, "USD"), "$0")
+assert.strictEqual(M.formatMoney(1234567.8, "RUB", {group: " ", decimal: ",", prefix: false}), "1 234 568 ₽")
+assert.strictEqual(M.formatMoney(9.5, "USD", {group: " ", decimal: ",", prefix: false}), "9,50 $")
+assert.strictEqual(M.formatMoney(7000, "USD", {group: ".", prefix: true, spaced: true}), "$ 7.000")
 assert.strictEqual(M.shortMoney(1500, {k: "%1к", m: "%1М", decimal: ","}), "1,5к")
 
 // Budget, months, burn
@@ -154,6 +193,44 @@ let c = cmd("week 10 client offers"); assert(c.ok && c.kind === "action" && c.ta
 assert.strictEqual(cmd("неделя 5 звонков").text, "звонков")
 for (const bad of ["week", "week offers", "week 0 offers", "week 10"]) assert.strictEqual(cmd(bad).error, "action-format", bad)
 
+assert.strictEqual(cmd("goal 7,000").amount, 7000)
+let gc = cmd("goal 7000 usd"); assert(gc.ok && gc.amount === 7000 && gc.currency === "USD")
+gc = cmd("goal $7000"); assert(gc.amount === 7000 && gc.currency === "USD")
+gc = cmd("цель 7к ₽"); assert(gc.amount === 7000 && gc.currency === "RUB")
+gc = cmd("goal 500 KZT"); assert(gc.amount === 500 && gc.currency === "KZT")
+assert.strictEqual(cmd("goal 7000").currency, "")
+assert.strictEqual(cmd("goal 7000 nope").error, "goal-format")
+assert.strictEqual(cmd("goal $7000 eur").error, "goal-format")
+let rc = cmd("rate USD 92"); assert(rc.ok && rc.kind === "rate" && rc.currency === "USD" && rc.value === 92)
+assert.strictEqual(cmd("курс usd 92,5").value, 92.5)
+assert.strictEqual(cmd("rate $ 0.011").value, 0.011)
+rc = cmd("rate usd off"); assert(rc.ok && rc.off && rc.currency === "USD")
+for (const bad of ["rate", "rate usd", "rate 92", "rate off", "rate nope 5", "rate usd abc", "rate usd -1"]) assert.strictEqual(cmd(bad).error, "rate-format", bad)
+
+// Rates: nothing is guessed, and a rate applies only to the currency it was entered against
+const usd = (date, amount, c) => ({date, amount_cents: amount * 100, currency: "USD", classification: c || "income"})
+let rp = M.emptyPlan()
+g = M.game([usd("2026-11-02", 100), tx("2026-11-03", 50)], asOf, "RUB", rp)
+assert(g.current === 50 && g.unconverted.length === 1 && g.unconverted[0].currency === "USD" && g.unconverted[0].count === 1 && g.unconverted[0].amount === 100 && g.ratesUsed.length === 0)
+rp = M.setRate(rp, "USD", 92, "RUB")
+g = M.game([usd("2026-11-02", 100), tx("2026-11-03", 50), usd("2026-11-03", 10, "expense")], asOf, "RUB", rp)
+assert(g.current === 9250 && g.profit === 8330 && g.unconverted.length === 0 && g.ratesUsed[0].currency === "USD" && g.ratesUsed[0].value === 92)
+assert.strictEqual(M.rateFor(rp, "USD", "EUR"), null)
+assert.strictEqual(M.convertAmount(rp, 5, "USD", "EUR"), null)
+assert.strictEqual(M.convertAmount(M.clearRate(rp, "USD"), 5, "USD", "RUB"), null)
+const ag = M.aggregateTagged([usd("2026-11-03", 10)], ["2026-11-01"], "RUB", rp); assert(ag.series[0].income === 920 && ag.skipped === 0)
+const jpy = M.game([{date: "2026-11-02", amount_cents: 1000, currency: "JPY", classification: "income"}], asOf, "RUB", M.setRate(M.emptyPlan(), "JPY", 0.6, "RUB")); assert.strictEqual(jpy.current, 600)
+
+// A goal in another currency
+let gp = M.setGoal(M.emptyPlan(), "2026-11", 7000, "USD")
+g = M.game([tx("2026-11-02", 64400)], asOf, "RUB", gp); assert(g.goal === null && g.goalCurrency === "USD")
+gp = M.setRate(gp, "USD", 92, "RUB")
+g = M.game([tx("2026-11-02", 64400)], asOf, "RUB", gp)
+assert(g.goal.target === 644000 && g.goal.percent === 10 && g.goal.original.amount === 7000 && g.goal.original.currency === "USD" && g.goalCurrency === "" && g.ratesUsed[0].currency === "USD")
+assert.strictEqual(M.game([], asOf, "USD", M.setGoal(M.emptyPlan(), "2026-11", 7000, "USD")).goal.original, null)
+assert.strictEqual(M.game([], asOf, "RUB", M.setGoal(M.emptyPlan(), "2026-10", 7000, "USD")).review, null)
+g = M.game([tx("2026-10-02", 92000)], asOf, "RUB", M.setRate(M.setGoal(M.emptyPlan(), "2026-10", 2000, "USD"), "USD", 92, "RUB")); assert(g.review.target === 184000 && g.review.percent === 50)
+
 // Goal stages stay round and end at the goal
 assert.deepStrictEqual(plain(M.goalStages(7000)), [2000, 4000, 6000, 7000])
 assert.deepStrictEqual(plain(M.goalStages(10000)), [2500, 5000, 7500, 10000])
@@ -219,6 +296,8 @@ assert.deepStrictEqual(plain(M.normalizePlan(null)), plain(M.emptyPlan()))
 let dirty = plain(M.normalizePlan({goals: {"2026-11": {amount: "x", currency: "USD"}, bad: {amount: 1, currency: "USD"}, "2026-12": {amount: 5, currency: "USD"}, "2027-01": null},
   actions: [{week: "2026-11-09", text: "a", target: 2000, done: -4}, {week: "nope", text: "a", target: 1}, 5, {week: "2026-11-02", off: true}], reviewed: "x"}))
 assert.deepStrictEqual(Object.keys(dirty.goals), ["2026-12", "2027-01"])
+const badRates = plain(M.normalizePlan({rates: {USD: {value: 92, base: "RUB"}, EUR: {value: -1, base: "RUB"}, NOPE: {value: 1, base: "RUB"}, GBP: {value: 1}}}))
+assert.deepStrictEqual(badRates.rates, {USD: {value: 92, base: "RUB"}})
 assert(dirty.actions.length === 2 && dirty.actions[0].off && dirty.actions[1].target === 999 && dirty.actions[1].done === 0 && dirty.reviewed === "")
 
 // Demo data

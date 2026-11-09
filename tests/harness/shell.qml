@@ -18,7 +18,7 @@ ShellRoot {
     var p = s.payload, g = s.game
     return {at: Date.now(), status: p ? p.status : null, demo: s.isDemo, errorKey: s.errorKey, errorArg: s.errorArg, setupReason: s.setupReason, setupError: s.setupError,
       readOnly: s.readOnly, hasKey: s.hasKey, baseUrl: s.baseUrl, notice: s.lastNotice, current: g ? g.current : null, total: g ? g.total : null,
-      goal: g && g.goal ? g.goal.target : null, warnings: p ? (p.warnings || []).map(function(w) { return w.key }) : [], zone: s.visibleTimezoneNote ? s.visibleTimezoneNote.dismiss : "",
+      goal: g && g.goal ? g.goal.target : null, goalCurrency: g ? g.goalCurrency : "", unconverted: g ? g.unconverted : [], rates: g ? g.ratesUsed : [], bizIncome: p && p.business && p.business.series.length ? p.business.series[p.business.series.length - 1].income : null, currency: s.currency, sample: s.plainMoney(9.5), sampleWhole: s.plainMoney(7000), warnings: p ? (p.warnings || []).map(function(w) { return w.key }) : [], zone: s.visibleTimezoneNote ? s.visibleTimezoneNote.dismiss : "",
       updatedAt: s.updatedAt.getTime(), recent: p && p.recent ? p.recent.length : 0, bizRecent: p && p.business && p.business.recent ? p.business.recent.length : 0,
       retryAttempt: s.retryAttempt, blocked: s.blockedUntil > Date.now(), retrying: s.canRetry}
   }

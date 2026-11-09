@@ -127,7 +127,7 @@
   "goal.pace": "Even pace %1",
   "goal.set": "Set a monthly goal",
   "goal.edit": "Change goal",
-  "goal.mismatch": "Your goal was set in %1, but Sure reports in %2. Set it again.",
+  "goal.mismatch": "Your goal is in %1, and Sure reports in %2. Add a rate to compare them.",
   "stat.profit": "Profit",
   "stat.record": "Record",
   "week.title": "This week",
@@ -142,7 +142,7 @@
   "command.goal-off": "Remove the monthly goal",
   "command.action": "This week: %1 × %2",
   "command.action-off": "Remove this week's action",
-  "entry.goal-format": "Type an amount: goal 7000",
+  "entry.goal-format": "Type an amount: goal 7000, or goal 7000 USD",
   "entry.action-format": "Type a number and the action: week 10 client offers",
   "race.goal": "%1% of the goal · %2 more to %3",
   "race.goal-reached": "Goal reached",
@@ -179,5 +179,14 @@
   "setup.back": "Back",
   "setup.access-read": "This key is view-only.",
   "setup.access-write": "This key can read and add entries.",
-  "setup.url-save-failed": "Couldn't save the address to the widget settings"
+  "setup.url-save-failed": "Couldn't save the address to the widget settings",
+  "entry.rate-format": "Type a currency and its rate: rate USD 92",
+  "entry.rate-same": "This is already your main currency in Sure",
+  "command.rate-word": "rate",
+  "command.rate": "Set rate: %1",
+  "command.rate-off": "Remove the %1 rate",
+  "rate.text": "1 %1 = %2 %3",
+  "rate.add": "Add rate",
+  "rate.edit": "Change rate",
+  "rate.missing": {"one": "%1 payment isn't counted: %2", "other": "%1 payments aren't counted: %2"}
 }

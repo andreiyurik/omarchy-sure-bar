@@ -9,9 +9,9 @@ const monthDate = (back, day) => iso(new Date(today.getFullYear(), today.getMont
 function defaultTransactions() {
   return [[0, 1, 1000], [1, 3, 500], [3, 5, 700]].map(([back, day, amount], i) => row(`seed-${i}`, monthDate(back, day), `Client ${i}`, amount, "income", ["tag-biz"]))
 }
-function row(id, date, name, amount, classification, tags) {
+function row(id, date, name, amount, classification, tags, currency = "USD") {
   const cents = Math.round(amount * 100)
-  return {id, date, name, amount_cents: cents, signed_amount_cents: classification === "income" ? cents : -cents, currency: "USD", classification, tag_ids: tags || [],
+  return {id, date, name, amount_cents: cents, signed_amount_cents: classification === "income" ? cents : -cents, currency, classification, tag_ids: tags || [],
     account: {id: "acc-1", name: "Cash"}, category: null, transfer: null, external_id: null, source: null}
 }
 
@@ -53,7 +53,7 @@ function create(options = {}) {
     if (path === "/cash_flow") {
       const month = q.get("month") || monthDate(0, 1)
       const income = state.transactions.filter(t => t.date.startsWith(month.slice(0, 7)) && t.classification === "income").reduce((sum, t) => sum + t.amount_cents / 100, 0)
-      return reply(200, {month, as_of: iso(new Date(today.getFullYear(), today.getMonth(), today.getDate() + (state.asOfOffset || 0))), time_zone: state.zone, currency: "USD", income: String(income), spending: "10.0"})
+      return reply(200, {month, as_of: iso(new Date(today.getFullYear(), today.getMonth(), today.getDate() + (state.asOfOffset || 0))), time_zone: state.zone, currency: state.currency || "USD", income: String(income), spending: "10.0"})
     }
     if (path === "/balance_sheet") return reply(200, {net_worth: {amount: "5000.0"}})
     if (path === "/tags") return reply(200, [{id: "tag-biz", name: "business"}])

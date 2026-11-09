@@ -19,6 +19,7 @@ Item {
   property bool snapshotChecked: false
   property var keyScopes: null
   property var timezoneNote: null
+  property string knownCurrency: ""
   property string checkedZone: ""
   property var entryAttempt: null
   property bool timedOut: false
@@ -91,12 +92,18 @@ Item {
 
   // Display helpers. Every amount on screen goes through money(), so hiding amounts has one switch.
   readonly property var locale: Qt.locale(Commons.I18n.formatLocale)
-  function plainMoney(value, code) { return Model.formatMoney(value, code || currency, locale.groupSeparator) }
+  // Qt knows where each language puts the symbol; the number here is only a probe.
+  readonly property string currencyPattern: Number(1).toLocaleCurrencyString(locale, "¤")
+  readonly property var moneyFormat: ({group: locale.groupSeparator, decimal: locale.decimalPoint, prefix: currencyPattern.indexOf("¤") === 0, spaced: /^¤\s/.test(currencyPattern)})
+  function plainMoney(value, code) { return Model.formatMoney(value, code || currency, moneyFormat) }
   function money(value, code) { return amountsHidden ? "•••" : plainMoney(value, code) }
   function signed(value, code) { return amountsHidden ? "•••" : (value > 0 ? "+" : "") + plainMoney(value, code) }
   function shortMoney(value) {
     return amountsHidden ? "•••" : Model.shortMoney(value, {k: t("short.k"), m: t("short.m"), decimal: locale.decimalPoint})
   }
+  function rateText(code, value) { return t("rate.text").arg(code).arg(number(value, value < 1 ? 4 : 2)).arg(Model.symbol(currency)) }
+  function entryPlaces(hint) { var account = previewAccount(hint); return Model.precision(account ? account.currency : currency) }
+  function parseCommand(text) { return Model.parseCommand(text, Model.precision(currency)) }
   function monthName(index) { return locale.standaloneMonthName(index) }
   function monthShort(index) { return locale.standaloneMonthName(index, Locale.ShortFormat).replace(/\.$/, "") }
   function monthOf(isoDate) { return monthShort(Model.monthIndex(isoDate)) }
@@ -368,7 +375,7 @@ Item {
       coffee: t("demo.coffee"), server: t("demo.server"), client: t("demo.client")}
     names.action = t("demo.action")
     gameSource = null
-    payload = Model.demo(new Date(), reason, Commons.I18n.language.indexOf("ru") === 0 ? "RUB" : "USD", names, plan)
+    payload = Model.demo(new Date(), reason, knownCurrency || (Commons.I18n.language.indexOf("ru") === 0 ? "RUB" : "USD"), names, plan)
   }
 
   function refreshIfStale() {
@@ -411,6 +418,7 @@ Item {
       if (failure !== null) { fail(failure); return }
       root.accounts = (base.accounts.accounts || []).slice(0, 200)
       root.tags = (base.tags || []).slice(0, 1000)
+      root.knownCurrency = base.cash.currency
       if (!root.accounts.length) { retryAttempt = 0; showDemo("demo.reason.no-accounts"); return }
       var months = Model.monthsBack(base.cash.month, 6)
       var requests = months.slice(0, -1).filter(function(month) { return !known || !known.months[month] })
@@ -449,7 +457,7 @@ Item {
   function revenueResult(fresh, months, currency, truncated, start, known) {
     var slim = fresh.map(Model.slimTransaction)
     var all = start ? Model.mergeTransactions(known.transactions, slim, start) : slim
-    var result = Model.aggregateTagged(all, months, currency)
+    var result = Model.aggregateTagged(all, months, currency, plan)
     result.transactions = all
     result.truncated = truncated || (!!start && known.truncated === true)
     result.recent = fresh.slice(0, 6).map(recentRow)
@@ -577,7 +585,7 @@ Item {
 
   function addEntry(text, done) {
     if (saving) return
-    var entry = Model.parseEntry(text, new Date(), businessTag)
+    var entry = Model.parseEntry(text, new Date(), businessTag, entryPlaces)
     if (!entry.ok) { done(false, t("entry." + entry.error).replace("%1", entry.amount || "")); return }
     if (!payload || payload.status === "demo") { done(false, t("entry.demo")); return }
     if (readOnly) { done(false, t("entry.read-only")); return }
@@ -687,6 +695,8 @@ Item {
     } else if (gameSource) {
       var next = Object.assign({}, payload)
       next.game = Model.game(gameSource.transactions, gameSource.asOf, gameSource.currency, plan)
+      var totals = Model.aggregateTagged(gameSource.transactions, payload.series.map(function(point) { return point.month }), gameSource.currency, plan)
+      next.business = Object.assign({}, payload.business, {series: totals.series, skipped: totals.skipped})
       payload = next
     }
   }
@@ -697,7 +707,8 @@ Item {
   }
   function runCommand(command) {
     if (!game) return
-    if (command.kind === "goal") savePlan(Model.setGoal(plan, game.monthKey, command.off ? null : command.amount, currency))
+    if (command.kind === "rate") savePlan(command.off ? Model.clearRate(plan, command.currency) : Model.setRate(plan, command.currency, command.value, currency))
+    else if (command.kind === "goal") savePlan(Model.setGoal(plan, game.monthKey, command.off ? null : command.amount, command.currency || currency))
     else if (command.off) savePlan(Model.clearAction(plan, game.week))
     else savePlan(Model.setAction(plan, game.week, command.target, command.text))
   }

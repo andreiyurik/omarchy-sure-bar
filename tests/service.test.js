@@ -189,6 +189,30 @@ test("today's entry counts when the server's clock is a day behind", async () =>
   assert(callbacks.e.ok && states.a.current === 300)
   s.close()
 })
+test("money in another currency waits for a rate, then counts everywhere", async () => {
+  const transactions = [row("u1", monthDate(0, 1), "Client", 100, "income", ["tag-biz"], "USD"), row("r1", monthDate(0, 1), "Local", 500, "income", ["tag-biz"], "RUB")]
+  const s = await create({state: {currency: "RUB", transactions}}), home = newHomeWithKey()
+  const rate = {ok: true, kind: "rate", off: false, currency: "USD", value: 92}, goal = {ok: true, kind: "goal", off: false, amount: 1000, currency: "USD"}
+  const {states} = await run(home, {baseUrl: s.url}, ["idle", {state: "before"}, {call: "runCommand", args: [goal]}, {state: "goal"}, {call: "runCommand", args: [rate]}, {state: "after"}, {wait: 150}])
+  assert(states.before.current === 500 && states.before.unconverted[0].currency === "USD" && states.before.unconverted[0].amount === 100)
+  assert(states.goal.goal === null && states.goal.goalCurrency === "USD")
+  assert(states.after.current === 9700 && states.after.unconverted.length === 0 && states.after.goal === 92000 && states.after.bizIncome === 9700 && states.after.rates[0].value === 92)
+  const again = await run(home, {baseUrl: s.url}, ["idle", {state: "a"}])
+  assert.strictEqual(again.states.a.current, 9700, "the rate is saved")
+  s.close()
+})
+test("a demo uses the main currency of a Sure with no accounts yet", async () => {
+  const s = await create({state: {currency: "EUR", accounts: []}})
+  const {states} = await run(newHomeWithKey(), {baseUrl: s.url}, ["idle", {state: "a"}])
+  assert(states.a.demo && states.a.currency === "EUR")
+  s.close()
+})
+test("amounts follow the language's format", async () => {
+  const s = await create()
+  const {states} = await run(newHomeWithKey(), {baseUrl: s.url}, ["idle", {state: "a"}])
+  assert(states.a.sample === "$9.50" && states.a.sampleWhole === "$7,000", JSON.stringify([states.a.sample, states.a.sampleWhole]))
+  s.close()
+})
 test("waking from sleep refreshes", async () => {
   const s = await create()
   await run(newHomeWithKey(), {baseUrl: s.url, tickMs: 60}, ["idle", {call: "refresh", args: [false]}, {wait: 20}, "idle", {until: "(s.now = new Date(Date.now() - 600000), true)"}, {wait: 220}, "idle"])

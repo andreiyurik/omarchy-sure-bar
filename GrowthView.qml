@@ -17,6 +17,8 @@ Column {
   readonly property color recordTick: Util.alpha(Commons.Color.popups.text, 0.45)
   readonly property color stageTick: Util.alpha(Commons.Color.popups.text, 0.3)
   readonly property var extras: game ? game.achieved.filter(function(win) { return win.kind !== "revenue" }) : []
+  // The first currency that needs a rate before its money can count.
+  readonly property string rateNeeded: !game ? "" : game.goalCurrency || (game.unconverted.length ? game.unconverted[0].currency : "")
   readonly property var hoveredStep: ladder.hovered >= 0 && game ? game.ladder[ladder.hovered] : null
   signal commandRequested(string text)
   spacing: Style.space(14)
@@ -29,7 +31,9 @@ Column {
   }
   function goalCaption() {
     if (goal.reached) return service.t("goal.over")
-    return service.t(goal.halfway ? "goal.to" : "goal.of").arg(service.money(goal.target))
+    var amount = service.money(goal.target)
+    if (goal.original) amount += " (" + service.money(goal.original.amount, goal.original.currency) + ")"
+    return service.t(goal.halfway ? "goal.to" : "goal.of").arg(amount)
   }
   function goalTicks() {
     var out = goal.stages.filter(function(stage) { return stage < goal.target }).map(function(stage) { return {ratio: stage / root.scale, color: root.stageTick} })
@@ -68,7 +72,7 @@ Column {
         visible: !!root.goal
         iconText: "󰏫"; foreground: Commons.Color.popups.text
         tooltipText: root.service ? root.service.t("goal.edit") : ""
-        onClicked: root.commandRequested(root.goalWord() + Math.round(root.goal.target))
+        onClicked: root.commandRequested(root.goalWord() + (root.goal.original ? root.goal.original.amount + " " + root.goal.original.currency : Math.round(root.goal.target)))
       }
       Hint {
         anchors.right: editGoal.visible ? editGoal.left : parent.right; anchors.verticalCenter: parent.verticalCenter
@@ -173,14 +177,32 @@ Column {
       wrapMode: Text.Wrap
       text: root.service ? root.service.t("growth.first-hint") : ""
     }
-    Hint {
-      width: parent.width
-      visible: !!root.game && root.game.goalCurrency !== ""
-      wrapMode: Text.Wrap
-      text: root.game && root.service ? root.service.t("goal.mismatch").arg(root.game.goalCurrency).arg(root.service.currency) : ""
+    Item {
+      width: parent.width; height: Math.max(rateHint.implicitHeight, rateButton.implicitHeight)
+      visible: root.rateNeeded !== ""
+      Hint {
+        id: rateHint
+        anchors.left: parent.left; anchors.right: rateButton.left; anchors.rightMargin: Style.space(8); anchors.verticalCenter: parent.verticalCenter
+        wrapMode: Text.Wrap
+        text: {
+          var g = root.game, s = root.service
+          if (!g || !s || root.rateNeeded === "") return ""
+          if (g.goalCurrency) return s.t("goal.mismatch").arg(g.goalCurrency).arg(s.currency)
+          var gap = g.unconverted[0]
+          return s.tn("rate.missing", gap.count).arg(gap.count).arg(s.money(gap.amount, gap.currency))
+        }
+      }
+      Ui.Button {
+        id: rateButton
+        anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+        foreground: Commons.Color.popups.text
+        bordered: true
+        text: root.service ? root.service.t("rate.add") : ""
+        onClicked: root.commandRequested(root.service.t("command.rate-word") + " " + root.rateNeeded + " ")
+      }
     }
     Ui.Button {
-      visible: !!root.game && !root.goal
+      visible: !!root.game && !root.goal && root.game.goalCurrency === ""
       foreground: Commons.Color.popups.text
       bordered: true
       text: root.service ? root.service.t("goal.set") : ""
@@ -214,6 +236,24 @@ Column {
         return g.record ? root.service.t("growth.record").arg(root.service.monthOf(g.record.month)) : root.service.t("stat.record")
       }
       value: !root.game ? "—" : root.game.isRecord ? root.service.money(root.game.current) : root.game.record ? root.service.money(root.game.record.amount) : "—"
+    }
+  }
+
+  // Rates in force, so a converted number is never a mystery.
+  Item {
+    width: parent.width; height: Math.max(rateLine.implicitHeight, editRate.implicitHeight)
+    visible: !!root.game && root.game.ratesUsed.length > 0
+    Hint {
+      id: rateLine
+      anchors.left: parent.left; anchors.right: editRate.left; anchors.rightMargin: Style.space(8); anchors.verticalCenter: parent.verticalCenter
+      text: root.game ? root.game.ratesUsed.map(function(rate) { return root.service.rateText(rate.currency, rate.value) }).join("  ·  ") : ""
+    }
+    Ui.PanelActionButton {
+      id: editRate
+      anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+      iconText: "󰏫"; foreground: Commons.Color.popups.text
+      tooltipText: root.service ? root.service.t("rate.edit") : ""
+      onClicked: { var rate = root.game.ratesUsed[0]; root.commandRequested(root.service.t("command.rate-word") + " " + rate.currency + " " + rate.value) }
     }
   }
 

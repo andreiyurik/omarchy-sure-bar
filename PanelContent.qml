@@ -18,8 +18,8 @@ Column {
   readonly property Item focusItem: showSetup ? setup.firstField : input
   readonly property bool editing: input.activeFocus || setup.editing
   readonly property var payload: service ? service.payload : null
-  readonly property var command: service ? Model.parseCommand(input.text) : null
-  readonly property var parsed: service && !command && input.text.trim() !== "" ? Model.parseEntry(input.text, new Date(), service.businessTag) : null
+  readonly property var command: service ? service.parseCommand(input.text) : null
+  readonly property var parsed: service && !command && input.text.trim() !== "" ? Model.parseEntry(input.text, new Date(), service.businessTag, service.entryPlaces) : null
   readonly property var targetAccount: parsed && parsed.ok && service ? service.previewAccount(parsed.account) : null
   readonly property bool accountMissing: !!parsed && parsed.ok && !targetAccount && !service.isDemo
   readonly property var banners: {
@@ -47,6 +47,7 @@ Column {
     error = ""
     if (command) {
       if (!command.ok) { error = service.t("entry." + command.error); return }
+      if (commandSameCurrency(command)) { error = service.t("entry.rate-same"); return }
       service.runCommand(command)
       input.text = ""
       return
@@ -63,10 +64,13 @@ Column {
     input.cursorPosition = text.length
     input.forceActiveFocus()
   }
+  function commandSameCurrency(c) { return c.kind === "rate" && c.currency === service.currency }
   function commandPreview(c) {
     var s = service
     if (!c.ok) return s.t("entry." + c.error)
-    if (c.kind === "goal") return c.off ? s.t("command.goal-off") : s.t("command.goal").arg(s.plainMoney(c.amount)).arg(s.game ? s.monthName(s.game.monthIndex) : "")
+    if (commandSameCurrency(c)) return s.t("entry.rate-same")
+    if (c.kind === "rate") return c.off ? s.t("command.rate-off").arg(c.currency) : s.t("command.rate").arg(s.rateText(c.currency, c.value))
+    if (c.kind === "goal") return c.off ? s.t("command.goal-off") : s.t("command.goal").arg(s.plainMoney(c.amount, c.currency)).arg(s.game ? s.monthName(s.game.monthIndex) : "")
     return c.off ? s.t("command.action-off") : s.t("command.action").arg(c.target).arg(c.text)
   }
   function preview() {
