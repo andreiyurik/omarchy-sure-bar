@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0
+
+- Works with Sure on this computer or on a VPS: address and key on one screen, checked before saving.
+- Connection problems are named: DNS, refused, timeout, certificate, a proxy or login page, an old Sure, rate limits.
+- Offline, the last real numbers stay on screen, with automatic retries and a refresh after sleep.
+- Lost replies can't create duplicate entries. View-only keys are supported.
+- All of Sure's currencies, with their precision and your language's number format. Manual rates for business money and goals in another currency.
+- Tests against a fake Sure that misbehaves, and nightly checks against real Sure images.
+
 ## 0.1.0
 
 First public release.
@@ -11,9 +20,4 @@ First public release.
 - Money view: net cash flow, six-month chart, budgets, recent transactions, with an all/business filter.
 - One-line entry with a live preview and undo from the notification.
 - Connect screen that verifies an API key before saving it.
-- Works with Sure on this computer or on a VPS: address and key on one screen, checked before saving.
-- Connection problems are named: DNS, refused, timeout, certificate, a proxy or login page, an old Sure, rate limits.
-- Offline, the last real numbers stay on screen, with automatic retries and a refresh after sleep.
-- Lost replies can't create duplicate entries. View-only keys are supported.
-- All of Sure's currencies, with their precision and your language's number format. Manual rates for business money and goals in another currency.
 - English and Russian.
