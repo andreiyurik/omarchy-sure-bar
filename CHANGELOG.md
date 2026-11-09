@@ -11,4 +11,8 @@ First public release.
 - Money view: net cash flow, six-month chart, budgets, recent transactions, with an all/business filter.
 - One-line entry with a live preview and undo from the notification.
 - Connect screen that verifies an API key before saving it.
+- Works with Sure on this computer or on a VPS: address and key on one screen, checked before saving.
+- Connection problems are named: DNS, refused, timeout, certificate, a proxy or login page, an old Sure, rate limits.
+- Offline, the last real numbers stay on screen, with automatic retries and a refresh after sleep.
+- Lost replies can't create duplicate entries. View-only keys are supported.
 - English and Russian.
