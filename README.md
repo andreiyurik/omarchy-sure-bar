@@ -1,8 +1,8 @@
 # Sure Bar
 
-Your revenue, cash flow and quick expense entry in the [Omarchy](https://omarchy.org) bar, backed by your own self-hosted [Sure](https://github.com/we-promise/sure).
+Your monthly revenue goal, cash flow and one-line expense entry in the [Omarchy](https://omarchy.org) bar, backed by your own [Sure](https://github.com/we-promise/sure), on this computer or on a VPS.
 
-![Sure Bar panel with demo data](preview.png)
+![The Growth and Money views of the panel, with demo data](preview.png)
 
 This is an unofficial plugin and is not affiliated with the Sure project.
 
@@ -14,11 +14,17 @@ This is an unofficial plugin and is not affiliated with the Sure project.
 - **Growth:** the comparison with last month and your best month, a ladder of lifetime milestones, your runway, and a review of last month against its goal.
 - **Money:** net cash flow, six months of income and spending, budgets paced against the calendar, and recent transactions, for everything or just the business.
 - **One-line entry:** type, check the preview, press Enter. Undo from the notification.
+- **Any Sure currency:** with manual rates for business money and goals in another currency.
+- **Local or VPS:** connection problems are named, and the last real numbers stay on screen when the server can't be reached.
+
+| Connect | Month review | Goal in another currency |
+| --- | --- | --- |
+| ![Connect screen asking for the server address and API key](docs/connect.png) | ![Last month's result against its goal, above this month's goal](docs/month-review.png) | ![A goal in euros compared with revenue in dollars using a manual rate](docs/currencies.png) |
 
 ## Requirements
 
 - Omarchy with the shell plugin system
-- A recent Sure release, on this computer or on a server you can reach (tested with the `stable` image)
+- A recent Sure release, on this computer or on a server you can reach (checked against the `stable` and `latest` images every night)
 - A Sure API key with read and write access. A read-only key works for viewing, but entries can't be saved.
 
 ## Install
@@ -29,23 +35,11 @@ omarchy plugin add https://github.com/andreiyurik/omarchy-sure-bar --enable
 
 Click the widget and follow the connect screen. Enter where Sure runs, create an API key, and paste it. The plugin checks both before saving anything, and says what's wrong if it can't connect. Until an account exists in Sure, the panel shows demo numbers. The gear button in the panel brings this screen back.
 
-## Sure on a VPS
+To update later:
 
-Everything works the same as on your own computer. A few things are worth setting up:
-
-- **Use HTTPS.** Your API key travels with every request, so plain HTTP is allowed only for `localhost` unless you turn on the setting. With [Caddy](https://caddyserver.com), this is all it takes:
-  ```
-  sure.example.com {
-  	reverse_proxy localhost:3000
-  }
-  ```
-  Without a domain, use `tailscale serve`, or an SSH tunnel and `http://localhost:3000` as the address: `ssh -N -L 3000:localhost:3000 you@server`.
-- **Keep `SELF_HOSTED=true`,** as in Sure's example compose file. Without it Sure limits an API key to 100 requests an hour.
-- **Set the timezone in Sure's settings.** Servers often run in UTC. If Sure's timezone differs from your computer's, the panel tells you once.
-- **If a login page protects Sure** (Authelia, Cloudflare Access), let `/api` through. API keys can't pass a login page.
-- **A view-only key is fine** if you'd rather not keep a key that can write. Viewing and goals work, and entries are turned off.
-
-When the server can't be reached, the panel keeps your last real numbers and says how old they are. It tries again by itself, and refreshes after the computer wakes up. If a reply gets lost while saving an entry, press Enter again: Sure won't save it twice.
+```bash
+omarchy plugin update andreiyurik.sure-bar
+```
 
 ## Adding entries
 
@@ -105,6 +99,24 @@ Sure converts its overall totals itself. Its API doesn't share exchange rates, s
 
 Without a rate, that money isn't guessed at: the panel shows how much is left out and offers to add one. One rate per currency applies to every month, so changing it changes past totals. Rates are never fetched from the internet, so the plugin still talks only to your Sure.
 
+## Sure on a VPS
+
+Everything works the same as on your own computer. A few things are worth setting up:
+
+- **Use HTTPS.** Your API key travels with every request, so plain HTTP is allowed only for `localhost` unless you turn on the setting. With [Caddy](https://caddyserver.com), this is all it takes:
+  ```
+  sure.example.com {
+  	reverse_proxy localhost:3000
+  }
+  ```
+  Without a domain, use `tailscale serve`, or an SSH tunnel and `http://localhost:3000` as the address: `ssh -N -L 3000:localhost:3000 you@server`.
+- **Keep `SELF_HOSTED=true`,** as in Sure's example compose file. Without it Sure limits an API key to 100 requests an hour.
+- **Set the timezone in Sure's settings.** Servers often run in UTC. If Sure's timezone differs from your computer's, the panel tells you once.
+- **If a login page protects Sure** (Authelia, Cloudflare Access), let `/api` through. API keys can't pass a login page.
+- **A view-only key is fine** if you'd rather not keep a key that can write. Viewing and goals work, and entries are turned off.
+
+When the server can't be reached, the panel keeps your last real numbers and says how old they are. It tries again by itself, and refreshes after the computer wakes up. If a reply gets lost while saving an entry, press Enter again: Sure won't save it twice.
+
 ## Optional hotkey
 
 Add to `~/.config/hypr/bindings.lua`:
@@ -117,7 +129,7 @@ o.bind("SUPER + ALT + M", "Sure finance panel", "omarchy-shell shell toggle andr
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| Sure URL | `http://localhost:3000` | Plain origin of your Sure instance |
+| Sure URL | `http://localhost:3000` | Where your Sure runs. The connect screen sets this for you. |
 | Allow plain HTTP to non-local hosts | off | See [Privacy and network](#privacy-and-network) |
 | Refresh in the background | on | Also retries after failures, refreshes after sleep and when you open old data. Turn off to fetch only when you press refresh or save an entry. |
 | Refresh interval | 10 minutes | 1 to 120 |
@@ -162,7 +174,11 @@ node tests/vps/e2e.test.js
 docker compose -f tests/vps/compose.yml down
 ```
 
-CI runs the first three, and checks the API contract against Sure's `stable` and `latest` images every night.
+CI runs the first three, and checks the API contract against Sure's `stable` and `latest` images every night. When a newer Sure adds currencies, regenerate the table:
+
+```bash
+docker run --rm -i --entrypoint ruby ghcr.io/we-promise/sure:latest - < tests/vps/currencies.rb > Currencies.js
+```
 
 ## License
 
